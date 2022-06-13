@@ -16,6 +16,8 @@
 #include "mlir/Dialect/DB/IR/DBDialect.h"
 #include "mlir/Dialect/DSA/IR/DSADialect.h"
 #include "mlir/Dialect/util/UtilDialect.h"
+#include "mlir/Dialect/cranelift/CraneliftDialect.h"
+#include "mlir/Conversion/CraneliftConversions/CraneliftConversions.h"
 
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/DBToStd/DBToStd.h"
@@ -140,7 +142,10 @@ int main(int argc, char** argv) {
    ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
       return mlir::db::createSimplifyToArithPass();
    });
-
+   ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+      return mlir::cranelift::createToCLIRPass();
+   });
+   mlir::cranelift::registerCraneliftConversionPasses();
    mlir::DialectRegistry registry;
    registry.insert<mlir::relalg::RelAlgDialect>();
    registry.insert<mlir::db::DBDialect>();
@@ -150,6 +155,8 @@ int main(int argc, char** argv) {
 
    registry.insert<mlir::memref::MemRefDialect>();
    registry.insert<mlir::util::UtilDialect>();
+   registry.insert<mlir::cranelift::CraneliftDialect>();
+
    registry.insert<mlir::scf::SCFDialect>();
    registry.insert<mlir::LLVM::LLVMDialect>();
    mlir::torch::registerAllDialects(registry);
