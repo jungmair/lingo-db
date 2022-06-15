@@ -28,6 +28,7 @@ for qnum in range(1, 23):
     proc1 = subprocess.run(command, stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     returncode=proc1.returncode
     runtime =0.0
+    conversion=0.0
     if returncode==0:
         output = proc1.stdout.decode('utf8')
         m = re.search(r'runtime: ([\d,\.,e,\+]+) ms', output)
@@ -45,13 +46,20 @@ for qnum in range(1, 23):
         m = re.search(r'lowering to llvm took: ([\d,\.,e,\+]+) ms', output)
         assert m is not None, 'Unexpected output:\n' + output
         lower_to_llvm_time = float(m.group(1))
-        m = re.search(r'conversion: ([\d,\.,e,\+]+) ms', output)
-        assert m is not None, 'Unexpected output:\n' + output
-        conversion = float(m.group(1))
+        #m = re.search(r'conversion: ([\d,\.,e,\+]+) ms', output)
+        #assert m is not None, 'Unexpected output:\n' + output
+        #conversion = float(m.group(1))
         m = re.search(r'jit: ([\d,\.,e,\+]+) ms', output)
         assert m is not None, 'Unexpected output:\n' + output
         jit = float(m.group(1))
         print(output)
+    else:
+        optimization_time=0.0
+        lower_to_db_time=0.0
+        lower_to_std_time=0.0
+        lower_to_llvm_time=0.0
+        conversion=0.0
+        jit=0.0
     results.append(QueryResult("tpch" + str(qnum), runtime,optimization_time,lower_to_db_time,lower_to_std_time,lower_to_llvm_time,conversion,jit, returncode))
 print('%12s %12s %12s %12s %12s %12s %12s %12s %12s' % ("#Query", "Runtime","Query Opt.","-> db","-> std","-> llvm","-> LLVM","LLVM", "Error?"))
 for res in results:

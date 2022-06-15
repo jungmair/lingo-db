@@ -7,6 +7,7 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/cranelift/CraneliftTypes.h"
+#include "mlir/Dialect/cranelift/CraneliftEnums.h"
 #include "mlir/IR/Builders.h"
 
 #define GET_OP_CLASSES

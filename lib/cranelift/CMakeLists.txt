@@ -22,6 +22,7 @@ add_mlir_dialect_library(MLIRCranelift
         CraneliftOps.cpp
         Translator.cpp
         CraneliftTypes.cpp
+        CraneliftEnums.cpp
         ADDITIONAL_HEADER_DIRS
         ../../include/mlir/Dialect/cranelift
 

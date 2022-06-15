@@ -50,6 +50,11 @@ def FuncOp : Cranelift_Op<"func", [
     FunctionType getFunctionType() { return function_type();}
   }];
 }
+def AllocaOp  : Cranelift_Op<"alloc_stack"> {
+let arguments = (ins I32Attr:$size);
+let results=(outs I64:$ref);
+let assemblyFormat = "  $size attr-dict";
+}
 
 def ReturnOp : Cranelift_Op<"return", [NoSideEffect, HasParent<"FuncOp">,Terminator]> {
 
@@ -133,6 +138,38 @@ def SelectOp : Cranelift_Op<"select"> {
   let assemblyFormat = "attr-dict $condition `?` $trueVal `:` type($trueVal) `,` $falseVal `:` type($falseVal) `->` type($res)";
 }
 
+def StoreOp  : Cranelift_Op<"store"> {
+let arguments = (ins AnyType:$x,I64:$p);
+let assemblyFormat = "$x `:` type($x) `,` $p attr-dict";
+}
+def LoadOp  : Cranelift_Op<"load"> {
+let arguments = (ins I64:$p);
+let results = (outs AnyType:$res);
+let assemblyFormat = "$p `:` type($res) attr-dict";
+}
+
+
+
+
+def Cranelift_AtomicRmwOpTypeAttr : I64EnumAttr<
+    "AtomicRmwOpType", "",
+    [
+      I64EnumAttrCase<"Add", 0>,
+      I64EnumAttrCase<"Sub", 1>,
+      I64EnumAttrCase<"And", 2>,
+      I64EnumAttrCase<"Nand", 3>,
+      I64EnumAttrCase<"Or", 4>,
+      I64EnumAttrCase<"Xor", 5>,
+      I64EnumAttrCase<"Xchg", 6>,
+      I64EnumAttrCase<"Umin", 7>,
+      I64EnumAttrCase<"Umax", 8>,
+      I64EnumAttrCase<"Smin", 9>,
+      I64EnumAttrCase<"Smax", 10>,
+
+    ]> {
+  let cppNamespace = "::mlir::cranelift";
+}
+
 
 def Cranelift_ICmpPredicateAttr : I64EnumAttr<
     "ICmpPredicate", "",
@@ -140,25 +177,34 @@ def Cranelift_ICmpPredicateAttr : I64EnumAttr<
       I64EnumAttrCase<"eq", 0>,
       I64EnumAttrCase<"ne", 1>,
       I64EnumAttrCase<"slt", 2>,
-      I64EnumAttrCase<"sle", 5>,
-      I64EnumAttrCase<"sgt", 4>,
       I64EnumAttrCase<"sge", 3>,
+      I64EnumAttrCase<"sgt", 4>,
+      I64EnumAttrCase<"sle", 5>,
       I64EnumAttrCase<"ult", 6>,
-      I64EnumAttrCase<"ule", 7>,
+      I64EnumAttrCase<"uge", 7>,
       I64EnumAttrCase<"ugt", 8>,
-      I64EnumAttrCase<"uge", 9>,
+      I64EnumAttrCase<"ule", 9>,
       I64EnumAttrCase<"of", 10>,
       I64EnumAttrCase<"nof", 11>,
 
     ]> {
   let cppNamespace = "::mlir::cranelift";
 }
-def Cranelift_CmpIOp : Cranelift_Op<"icmp"> {
+def Cranelift_ICmpOp : Cranelift_Op<"icmp"> {
   let arguments = (ins Cranelift_ICmpPredicateAttr:$predicate,
                        SignlessIntegerLike:$lhs,
                        SignlessIntegerLike:$rhs);
   let results = (outs I1:$res);
     let assemblyFormat = "$predicate $lhs `:` type($lhs) `,` $rhs  `:` type($rhs) attr-dict";
+
+}
+
+def Cranelift_AtomicRmwOp : Cranelift_Op<"atomic_rmw"> {
+  let arguments = (ins Cranelift_AtomicRmwOpTypeAttr:$rmw_op,
+                       I64:$p,
+                       SignlessIntegerLike:$x);
+  let results = (outs SignlessIntegerLike:$res);
+    let assemblyFormat = "$rmw_op $p `,` $x  `:` type($x) `->` type($res) attr-dict";
 
 }
 
@@ -172,9 +218,18 @@ class Cranelift_Arith_IntBinaryOp<string mnemonic, list<Trait> traits = []> :
     Cranelift_Arith_BinaryOp<mnemonic, traits>,
     Arguments<(ins SignlessIntegerLike:$lhs, SignlessIntegerLike:$rhs)>,
     Results<(outs SignlessIntegerLike:$result)>;
+class Cranelift_Arith_FloatBinaryOp<string mnemonic, list<Trait> traits = []> :
+    Cranelift_Arith_BinaryOp<mnemonic, traits>,
+    Arguments<(ins FloatLike:$lhs, FloatLike:$rhs)>,
+    Results<(outs FloatLike:$result)>;
+def FAddOp : Cranelift_Arith_FloatBinaryOp<"fadd">;
+def FSubOp : Cranelift_Arith_FloatBinaryOp<"fsub">;
+def FMulOp : Cranelift_Arith_FloatBinaryOp<"fmul">;
+def FDivOp : Cranelift_Arith_FloatBinaryOp<"fdiv">;
 def IAddOp : Cranelift_Arith_IntBinaryOp<"iadd">;
 def ISubOp : Cranelift_Arith_IntBinaryOp<"isub">;
 def IMulOp : Cranelift_Arith_IntBinaryOp<"imul">;
+def UMulHiOp : Cranelift_Arith_IntBinaryOp<"umulhi">;
 def UDivOp : Cranelift_Arith_IntBinaryOp<"udiv">;
 def SDivOp : Cranelift_Arith_IntBinaryOp<"sdiv">;
 def URemOp : Cranelift_Arith_IntBinaryOp<"urem">;
@@ -197,14 +252,40 @@ def SExtendOp : Cranelift_Op<"sextend"> {
   let results = (outs SignlessIntegerLike:$res);
   let assemblyFormat = "attr-dict $value `:` type($value) `->` type($res)";
 }
+def FPromoteOp : Cranelift_Op<"fpromote"> {
+  let arguments = (ins FloatLike:$value);
+  let results = (outs FloatLike:$res);
+  let assemblyFormat = "attr-dict $value `:` type($value) `->` type($res)";
+}
+def FDemoteOp : Cranelift_Op<"fdemote"> {
+  let arguments = (ins FloatLike:$value);
+  let results = (outs FloatLike:$res);
+  let assemblyFormat = "attr-dict $value `:` type($value) `->` type($res)";
+}
 def IReduceOp : Cranelift_Op<"ireduce"> {
   let arguments = (ins SignlessIntegerLike:$value);
   let results = (outs SignlessIntegerLike:$res);
   let assemblyFormat = "attr-dict $value `:` type($value) `->` type($res)";
 }
+def BIntOp : Cranelift_Op<"bint"> {
+  let arguments = (ins I1:$value);
+  let results = (outs SignlessIntegerLike:$res);
+  let assemblyFormat = "attr-dict $value `->` type($res)";
+}
 def IConcatOp : Cranelift_Op<"iconcat"> {
   let arguments = (ins SignlessIntegerLike:$lower,SignlessIntegerLike:$higher);
   let results = (outs SignlessIntegerLike:$res);
   let assemblyFormat = "attr-dict $lower `,` $higher  `:` type($lower) `,` type($higher) `->` type($res)";
+}
+def ISplitOp : Cranelift_Op<"isplit"> {
+  let arguments = (ins SignlessIntegerLike:$val);
+  let results = (outs SignlessIntegerLike:$lower,SignlessIntegerLike:$higher);
+  let assemblyFormat = "attr-dict $val `:` type($val) `->` type($lower) `,` type($higher)";
+}
+
+def FuncAddrOp : Cranelift_Op<"func_addr"> {
+  let arguments = (ins FlatSymbolRefAttr:$callee);
+  let results = (outs I64:$res);
+  let assemblyFormat = "attr-dict $callee";
 }
 #endif// OPS

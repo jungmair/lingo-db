@@ -6,6 +6,6 @@
 
 #include "mlir/Dialect/cranelift/CraneliftOpsDialect.h.inc"
 namespace mlir::cranelift {
-std::unique_ptr<mlir::Pass> createToCLIRPass();
+//std::unique_ptr<mlir::Pass> createToCLIRPass();
 }
 #endif // MLIR_DIALECT_CRANELIFT_CRANELIFTDIALECT_H

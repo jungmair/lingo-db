@@ -26,6 +26,7 @@
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
 #include "mlir/Conversion/RelAlgToDB/RelAlgToDBPass.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
+#include "mlir/Conversion/CraneliftConversions/CraneliftConversions.h"
 
 #include "mlir/Transforms/CustomPasses.h"
 
@@ -39,6 +40,9 @@
 #include "mlir/Dialect/RelAlg/IR/RelAlgDialect.h"
 #include "mlir/Dialect/RelAlg/Passes.h"
 #include "mlir/Dialect/SCF/SCF.h"
+#include "mlir/Dialect/cranelift/CraneliftDialect.h"
+#include "mlir/Dialect/cranelift/CraneliftOps.h"
+#include "mlir/Dialect/cranelift/CraneliftExecutionEngine.h"
 
 #include "mlir/Conversion/UtilToLLVM/Passes.h"
 #include "mlir/Dialect/util/UtilDialect.h"
@@ -452,38 +456,17 @@ bool Runner::lowerToLLVM() {
    if (auto mainFunc = moduleOp.lookupSymbol<mlir::func::FuncOp>("main")) {
       ctxt->numArgs = mainFunc.getNumArguments();
       ctxt->numResults = mainFunc.getNumResults();
+      mlir::OpBuilder builder(moduleOp->getContext());
+      builder.setInsertionPointToStart(moduleOp.getBody());
+      builder.create<mlir::func::FuncOp>(moduleOp.getLoc(), "rt_set_execution_context", builder.getFunctionType(mlir::TypeRange({mlir::util::RefType::get(moduleOp->getContext(), mlir::IntegerType::get(moduleOp->getContext(), 8))}), mlir::TypeRange()), builder.getStringAttr("private"));
    }
    mlir::PassManager pm2(&ctxt->context);
    pm2.enableVerifier(runMode != RunMode::SPEED);
    pm2.addPass(mlir::createConvertSCFToCFPass());
-   pm2.addPass(createLowerToLLVMPass());
-   pm2.addNestedPass<mlir::LLVM::LLVMFuncOp>(std::make_unique<EnforceCPPABIPass>());
-   pm2.addPass(mlir::createCSEPass());
+   pm2.addPass(mlir::cranelift::createLowerToCraneliftPass());
    if (mlir::failed(pm2.run(ctxt->module.get()))) {
+      dump();
       return false;
-   }
-   mlir::OpBuilder builder(moduleOp->getContext());
-   builder.setInsertionPointToStart(moduleOp.getBody());
-   auto pointerType = mlir::LLVM::LLVMPointerType::get(builder.getI8Type());
-   auto globalOp = builder.create<mlir::LLVM::GlobalOp>(builder.getUnknownLoc(), builder.getI64Type(), false, mlir::LLVM::Linkage::Private, "execution_context", builder.getI64IntegerAttr(0));
-   auto setExecContextFn = builder.create<mlir::LLVM::LLVMFuncOp>(moduleOp.getLoc(), "rt_set_execution_context", mlir::LLVM::LLVMFunctionType::get(mlir::LLVM::LLVMVoidType::get(builder.getContext()), builder.getI64Type()), mlir::LLVM::Linkage::External);
-   {
-      mlir::OpBuilder::InsertionGuard guard(builder);
-      auto *block = setExecContextFn.addEntryBlock();
-      auto execContext = block->getArgument(0);
-      builder.setInsertionPointToStart(block);
-      auto ptr = builder.create<mlir::LLVM::AddressOfOp>(builder.getUnknownLoc(), globalOp);
-      builder.create<mlir::LLVM::StoreOp>(builder.getUnknownLoc(), execContext, ptr);
-      builder.create<mlir::LLVM::ReturnOp>(builder.getUnknownLoc(), mlir::ValueRange{});
-   }
-   if (auto getExecContextFn = mlir::dyn_cast_or_null<mlir::LLVM::LLVMFuncOp>(moduleOp.lookupSymbol("rt_get_execution_context"))) {
-      mlir::OpBuilder::InsertionGuard guard(builder);
-      auto *block = getExecContextFn.addEntryBlock();
-      builder.setInsertionPointToStart(block);
-      auto ptr = builder.create<mlir::LLVM::AddressOfOp>(builder.getUnknownLoc(), globalOp);
-      auto execContext = builder.create<mlir::LLVM::LoadOp>(builder.getUnknownLoc(), ptr);
-      auto execContextAsPtr = builder.create<mlir::LLVM::IntToPtrOp>(builder.getUnknownLoc(), pointerType, execContext);
-      builder.create<mlir::LLVM::ReturnOp>(builder.getUnknownLoc(), mlir::ValueRange{execContextAsPtr});
    }
    auto end = std::chrono::high_resolution_clock::now();
    std::cout << "lowering to llvm took: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0 << " ms" << std::endl;
@@ -662,11 +645,11 @@ bool Runner::runJit(runtime::ExecutionContext* context, size_t repeats, std::fun
          return false;
       }
    }
-   WrappedExecutionEngine engine(ctxt->module.get(), runMode);
+   mlir::cranelift::CraneliftExecutionEngine engine(ctxt->module.get());
    if (!engine.succeeded()) return false;
-   if ((runMode == RunMode::PERF || runMode == RunMode::DEBUGGING) && !engine.linkStatic()) return false;
+   //if ((runMode == RunMode::PERF || runMode == RunMode::DEBUGGING) && !engine.linkStatic()) return false;
    typedef uint8_t* (*myfunc)(void*);
-   auto fn = (myfunc) engine.getSetContextPtr();
+   auto fn = (myfunc) engine.getFunction("rt_set_execution_context");
    fn(context);
    uint8_t* res;
    std::cout << "jit: " << engine.getJitTime() / 1000.0 << " ms" << std::endl;
@@ -684,11 +667,11 @@ bool Runner::runJit(runtime::ExecutionContext* context, size_t repeats, std::fun
       auto executionStart = std::chrono::high_resolution_clock::now();
       if (ctxt->numResults == 1) {
          typedef uint8_t* (*myfunc)();
-         auto fn = (myfunc) engine.getMainFuncPtr();
+         auto fn = (myfunc) engine.getFunction("main");
          res = fn();
       } else {
          typedef void (*myfunc)();
-         auto fn = (myfunc) engine.getMainFuncPtr();
+         auto fn = (myfunc) engine.getFunction("main");
          fn();
       }
       auto executionEnd = std::chrono::high_resolution_clock::now();

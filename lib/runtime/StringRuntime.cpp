@@ -3,6 +3,7 @@
 #include "runtime/StringRuntime.h"
 #include "runtime/helpers.h"
 
+#include <iostream>
 #include <arrow/type.h>
 #include <arrow/util/decimal.h>
 

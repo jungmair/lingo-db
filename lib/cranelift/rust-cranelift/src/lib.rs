@@ -1,7 +1,4 @@
-#[no_mangle]
-pub extern "C" fn rust_function() {
-    println!("Hello World!");
-}
+
 
 use std::boxed::Box;
 use std::io::Write;
@@ -44,6 +41,7 @@ pub struct FunctionData<'a>
 impl ModuleData {
     fn emit_error(&self, err: &dyn Display, filename: Option<&str>){
         let error = err.to_string();
+        eprintln!("Problem: {}", err);
         if let Some(cb) = &self.error_callback {
             cb(self.userdata,CString::new(error).unwrap().as_ptr() as *const c_char,  filename.unwrap_or("").as_ptr() as *const c_char);
         }
@@ -74,6 +72,9 @@ pub extern "C" fn cranelift_module_new(target_triple: *const c_char, flags: *con
     let triple = triple!(trip);
     let isa_builder = isa::lookup(triple).unwrap();
     flag_builder.enable("enable_llvm_abi_extensions");
+    flag_builder.set("opt_level","speed");
+    flag_builder.set("enable_verifier","false");
+    flag_builder.set(" enable_probestack","false");
     for s in flag.split(",") {
         if s.len() > 0 {
             let n = s.find(",");
@@ -97,6 +98,7 @@ pub extern "C" fn cranelift_module_new(target_triple: *const c_char, flags: *con
             }
         }
     }
+
 
     let isa = isa_builder.finish(settings::Flags::new(flag_builder));
 
@@ -288,14 +290,21 @@ pub extern "C" fn cranelift_assign_data_to_global(ptr: *mut ModuleData, id: u32)
 
 
 #[no_mangle]
-pub extern "C" fn cranelift_jit(ptr: *mut ModuleData, func: u32) -> *const u8 {
+pub extern "C" fn cranelift_compile(ptr: *mut ModuleData) {
     let inst = unsafe {
         assert!(!ptr.is_null());
         &mut *ptr
     };
-    let mut module = inst.module.take().unwrap();
-    module.finalize_definitions();
-    let code = module.get_finalized_function(FuncId::from_u32(func));
+    inst.module.as_mut().unwrap().finalize_definitions();
+}
+
+#[no_mangle]
+pub extern "C" fn cranelift_get_compiled_fun(ptr: *mut ModuleData, func: u32) -> *const u8 {
+    let inst = unsafe {
+        assert!(!ptr.is_null());
+        &mut *ptr
+    };
+    let code = inst.module.as_mut().unwrap().get_finalized_function(FuncId::from_u32(func));
     code
 }
 
@@ -753,6 +762,15 @@ pub extern "C" fn cranelift_function_to_string(ptr: *mut ModuleData, userdata: u
     };
     let str = inst.ctx.func.to_string();
     cb(userdata, str.as_ptr() as *const c_char);
+        let flags = settings::Flags::new(settings::builder());
+        match cranelift_codegen::verify_function(&inst.ctx.func, &flags) {
+            Ok(_) => {}
+            Err(err) => {
+                let pretty_error =
+                    cranelift_codegen::print_errors::pretty_verifier_error(&inst.ctx.func, None, err);
+                panic!("pretty_error:\n{}", pretty_error);
+            }
+        }
 }
 
 #[no_mangle]
@@ -939,6 +957,16 @@ pub extern "C" fn cranelift_import_signature(ptr: *mut FunctionData, cc: Craneli
 }
 
 #[no_mangle]
+pub extern "C" fn cranelift_create_stack_slot(ptr: *mut FunctionData, bytes: u32) -> StackSlotCode {
+    let inst = unsafe {
+        assert!(!ptr.is_null());
+        &mut *ptr
+    };
+    let data=StackSlotData::new(StackSlotKind::ExplicitSlot, bytes);
+    return inst.builder.create_stack_slot(data).as_u32();
+}
+
+#[no_mangle]
 pub extern "C" fn cranelift_import_func(ptr: *mut FunctionData, name: *const c_char, cc: CraneliftCallConv,
     argscount: u32, args: *mut Type,
     retcount: u32, rets: *mut Type) -> u32 {
@@ -966,6 +994,16 @@ pub extern "C" fn cranelift_declare_func_in_current_func(ptr: *mut FunctionData,
         &mut *ptr
     };
     return inst.module.declare_func_in_func(FuncId::from_u32(source_id), inst.builder.func).as_u32();
+}
+
+#[no_mangle]
+pub extern "C" fn cranelift_declare_data_in_current_func(ptr: *mut FunctionData, source_id: u32) -> GlobalValueCode {
+
+    let inst = unsafe {
+        assert!(!ptr.is_null());
+        &mut *ptr
+    };
+    return inst.module.declare_data_in_func(DataId::from_u32(source_id), inst.builder.func).as_u32();
 }
 
 
@@ -3212,6 +3250,19 @@ pub extern "C" fn cranelift_iconcat(ptr: *mut FunctionData, lo: ValueCode, hi: V
        & mut * ptr
    };
     return inst.builder.ins().iconcat(Value::from_u32(lo), Value::from_u32(hi)).as_u32();
+}
+
+
+#[no_mangle]
+pub extern "C" fn cranelift_atomic_rmw(ptr: *mut FunctionData, memType: Type, op: *const c_char, p: ValueCode, x: ValueCode) -> ValueCode {
+   let inst = unsafe
+   {
+       assert!(!ptr.is_null());
+       & mut * ptr
+   };
+       let mut mf = MemFlags::new();
+   let op_str: &str = unsafe { CStr::from_ptr(op) }.to_str().unwrap();
+   return inst.builder.ins().atomic_rmw(convert_type(memType),mf, AtomicRmwOp::from_str(op_str).unwrap(), Value::from_u32(p), Value::from_u32(x)).as_u32();
 }
 /*
 #[no_mangle]

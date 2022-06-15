@@ -1,4 +1,5 @@
-add_library(runner runner.cpp result_formatting.cpp )
+include_directories(${CMAKE_BINARY_DIR}/lib/cranelift/rust-cranelift/)
+add_library(runner runner.cpp result_formatting.cpp)
 llvm_update_compile_flags(runner)
 target_link_libraries(runner PRIVATE ${LIBS} MLIRSQLFrontend PUBLIC arrow_shared pg_query::pg_query )
 if (COMPILE_FOR_PERF)
