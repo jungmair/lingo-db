@@ -7,6 +7,7 @@
 #include "mlir-support/eval.h"
 #include "runner/runner.h"
 
+#include <stdlib.h>
 void check(bool b, std::string message) {
    if (!b) {
       std::cerr << "ERROR: " << message << std::endl;
@@ -43,6 +44,7 @@ int main(int argc, char** argv) {
       runs = std::atoi(numRuns);
       std::cout << "using " << runs << " runs" << std::endl;
    }
+   unsetenv("PERF_BUILDID_DIR");
    check(runner.runJit(&context, runs, runner::Runner::printTable), "JIT execution failed");
    return 0;
 }

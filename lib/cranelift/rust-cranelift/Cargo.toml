@@ -5,15 +5,17 @@ edition = "2021"
 
 [lib]
 name ="ccranelift"
-crate-type =["cdylib"]
+crate-type =["staticlib"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cranelift = "0.78.0"
-cranelift-module = "0.78.0"
-cranelift-jit = "0.78.0"
-cranelift-codegen="0.78.0"
+cranelift = { path = "wasmtime/cranelift/umbrella", version = "0.86.0" }
+cranelift-module =  { path = "wasmtime/cranelift/module", version = "0.86.0" }
+cranelift-jit = { path = "wasmtime/cranelift/jit", version = "0.86.0" }
+cranelift-codegen={ path = "wasmtime/cranelift/codegen", version = "0.86.0" }
 target-lexicon="0.12.4"
 libc="0.2.126"
-cranelift-object="0.78.0"
+cranelift-object={ path = "wasmtime/cranelift/object", version = "0.86.0" }
+
+

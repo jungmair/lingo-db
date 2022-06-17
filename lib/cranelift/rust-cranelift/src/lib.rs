@@ -10,7 +10,6 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module, DataId, FuncId};
 use cranelift_codegen::isa::CallConv;
-use cranelift_codegen::binemit::NullTrapSink;
 use cranelift_codegen::ir::*;
 use cranelift_codegen::ir::entities::*;
 use cranelift_codegen::ir::entities::StackSlot;
@@ -72,9 +71,9 @@ pub extern "C" fn cranelift_module_new(target_triple: *const c_char, flags: *con
     let triple = triple!(trip);
     let isa_builder = isa::lookup(triple).unwrap();
     flag_builder.enable("enable_llvm_abi_extensions");
-    flag_builder.set("opt_level","speed");
-    flag_builder.set("enable_verifier","false");
-    flag_builder.set(" enable_probestack","false");
+    flag_builder.set("opt_level","speed").unwrap();
+    flag_builder.set("enable_verifier","false").unwrap();
+    flag_builder.set("enable_probestack","false").unwrap();
     for s in flag.split(",") {
         if s.len() > 0 {
             let n = s.find(",");
@@ -100,7 +99,7 @@ pub extern "C" fn cranelift_module_new(target_triple: *const c_char, flags: *con
     }
 
 
-    let isa = isa_builder.finish(settings::Flags::new(flag_builder));
+    let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
 
     let builder = JITBuilder::with_isa(isa,cranelift_module::default_libcall_names());
 
@@ -202,8 +201,7 @@ pub extern "C" fn cranelift_define_function(ptr: *mut ModuleData, func: u32) -> 
         assert!(!ptr.is_null());
         &mut *ptr
     };
-    let res = inst.module.as_mut().unwrap().define_function(FuncId::from_u32(func), &mut  inst.ctx,                &mut codegen::binemit::NullTrapSink {},
-    &mut codegen::binemit::NullStackMapSink {});
+    let res = inst.module.as_mut().unwrap().define_function(FuncId::from_u32(func), &mut  inst.ctx);
     if res.is_err()
     {
         inst.emit_error(&res.err().unwrap(), None);
@@ -1450,20 +1448,6 @@ pub extern "C" fn cranelift_load(ptr: *mut FunctionData, mem: Type, memflags: Me
     return inst.builder.ins().load(convert_type(mem), convert_memflags(memflags), Value::from_u32(p), offset).as_u32();
 }
 
-#[no_mangle]
-pub extern "C" fn cranelift_load_complex(ptr: *mut FunctionData, mem: Type, memflags: MemFlagCode, count: u32, args: * mut ValueCode, offset: Offset32) -> ValueCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().load_complex(convert_type(mem), convert_memflags(memflags), &argsdata, offset).as_u32();
-}
 
 #[no_mangle]
 pub extern "C" fn cranelift_store(ptr: *mut FunctionData, memflags: MemFlagCode, x: ValueCode, p: ValueCode, offset: Offset32) -> InstCode {
@@ -1475,20 +1459,6 @@ pub extern "C" fn cranelift_store(ptr: *mut FunctionData, memflags: MemFlagCode,
     return inst.builder.ins().store(convert_memflags(memflags), Value::from_u32(x), Value::from_u32(p), offset).as_u32();
 }
 
-#[no_mangle]
-pub extern "C" fn cranelift_store_complex(ptr: *mut FunctionData, memflags: MemFlagCode, x: ValueCode, count: u32, args: * mut ValueCode, offset: Offset32) -> InstCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().store_complex(convert_memflags(memflags), Value::from_u32(x), &argsdata, offset).as_u32();
-}
 
 #[no_mangle]
 pub extern "C" fn cranelift_uload8(ptr: *mut FunctionData, iext8: Type, memflags: MemFlagCode, p: ValueCode, offset: Offset32) -> ValueCode {
@@ -1500,20 +1470,6 @@ pub extern "C" fn cranelift_uload8(ptr: *mut FunctionData, iext8: Type, memflags
     return inst.builder.ins().uload8(convert_type(iext8), convert_memflags(memflags), Value::from_u32(p), offset).as_u32();
 }
 
-#[no_mangle]
-pub extern "C" fn cranelift_uload8_complex(ptr: *mut FunctionData, iext8: Type, memflags: MemFlagCode, count: u32, args: * mut ValueCode, offset: Offset32) -> ValueCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().uload8_complex(convert_type(iext8), convert_memflags(memflags),  &argsdata, offset).as_u32();
-}
 
 #[no_mangle]
 pub extern "C" fn cranelift_sload8(ptr: *mut FunctionData, iext8: Type, memflags: MemFlagCode, p: ValueCode, offset: Offset32) -> ValueCode {
@@ -1526,20 +1482,6 @@ pub extern "C" fn cranelift_sload8(ptr: *mut FunctionData, iext8: Type, memflags
     return inst.builder.ins().sload8(convert_type(iext8), convert_memflags(memflags),  Value::from_u32(p), offset).as_u32();
 }
 
-#[no_mangle]
-pub extern "C" fn cranelift_sload8_complex(ptr: *mut FunctionData, iext8: Type, memflags: MemFlagCode, count: u32, args: * mut ValueCode, offset: Offset32) -> ValueCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().sload8_complex(convert_type(iext8), convert_memflags(memflags),  &argsdata, offset).as_u32();
-}
 
 #[no_mangle]
 pub extern "C" fn cranelift_istore8(ptr: *mut FunctionData, memflags: MemFlagCode, x: ValueCode, p: ValueCode, offset: Offset32) -> InstCode {
@@ -1552,21 +1494,6 @@ pub extern "C" fn cranelift_istore8(ptr: *mut FunctionData, memflags: MemFlagCod
 }
 
 #[no_mangle]
-pub extern "C" fn cranelift_istore8_complex(ptr: *mut FunctionData, memflags: MemFlagCode, x: ValueCode, count: u32, args: * mut ValueCode, offset: Offset32) -> InstCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().istore8_complex(convert_memflags(memflags), Value::from_u32(x), &argsdata, offset).as_u32();
-}
-
-#[no_mangle]
 pub extern "C" fn cranelift_uload16(ptr: *mut FunctionData, iext16: Type, memflags: MemFlagCode, p: ValueCode, offset: Offset32) -> ValueCode {
    let inst = unsafe
    {
@@ -1576,20 +1503,6 @@ pub extern "C" fn cranelift_uload16(ptr: *mut FunctionData, iext16: Type, memfla
     return inst.builder.ins().uload16(convert_type(iext16), convert_memflags(memflags),  Value::from_u32(p), offset).as_u32();
 }
 
-#[no_mangle]
-pub extern "C" fn cranelift_uload16_complex(ptr: *mut FunctionData, iext16: Type, memflags: MemFlagCode, count: u32, args: * mut ValueCode, offset: Offset32) -> ValueCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().uload16_complex(convert_type(iext16), convert_memflags(memflags),  &argsdata, offset).as_u32();
-}
 
 #[no_mangle]
 pub extern "C" fn cranelift_sload16(ptr: *mut FunctionData, iext16: Type, memflags: MemFlagCode, p: ValueCode, offset: Offset32) -> ValueCode {
@@ -1601,20 +1514,6 @@ pub extern "C" fn cranelift_sload16(ptr: *mut FunctionData, iext16: Type, memfla
     return inst.builder.ins().sload16(convert_type(iext16), convert_memflags(memflags),  Value::from_u32(p), offset).as_u32();
 }
 
-#[no_mangle]
-pub extern "C" fn cranelift_sload16_complex(ptr: *mut FunctionData, iext16: Type, memflags: MemFlagCode, count: u32, args: * mut ValueCode, offset: Offset32) -> ValueCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().sload16_complex(convert_type(iext16), convert_memflags(memflags),  &argsdata, offset).as_u32();
-}
 
 #[no_mangle]
 pub extern "C" fn cranelift_istore16(ptr: *mut FunctionData, memflags: MemFlagCode, x: ValueCode, p: ValueCode, offset: Offset32) -> InstCode {
@@ -1624,21 +1523,6 @@ pub extern "C" fn cranelift_istore16(ptr: *mut FunctionData, memflags: MemFlagCo
        & mut * ptr
    };
     return inst.builder.ins().istore16(convert_memflags(memflags), Value::from_u32(x), Value::from_u32(p), offset).as_u32();
-}
-
-#[no_mangle]
-pub extern "C" fn cranelift_istore16_complex(ptr: *mut FunctionData, memflags: MemFlagCode, x: ValueCode, count: u32, args: * mut ValueCode, offset: Offset32) -> InstCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().istore16_complex(convert_memflags(memflags), Value::from_u32(x), &argsdata, offset).as_u32();
 }
 
 #[no_mangle]
@@ -1652,21 +1536,6 @@ pub extern "C" fn cranelift_uload32(ptr: *mut FunctionData, memflags: MemFlagCod
 }
 
 #[no_mangle]
-pub extern "C" fn cranelift_uload32_complex(ptr: *mut FunctionData, memflags: MemFlagCode, count: u32, args: * mut ValueCode, offset: Offset32) -> ValueCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().uload32_complex(convert_memflags(memflags), &argsdata, offset).as_u32();
-}
-
-#[no_mangle]
 pub extern "C" fn cranelift_sload32(ptr: *mut FunctionData, memflags: MemFlagCode, p: ValueCode, offset: Offset32) -> ValueCode {
    let inst = unsafe
    {
@@ -1676,20 +1545,6 @@ pub extern "C" fn cranelift_sload32(ptr: *mut FunctionData, memflags: MemFlagCod
     return inst.builder.ins().sload32(convert_memflags(memflags), Value::from_u32(p), offset).as_u32();
 }
 
-#[no_mangle]
-pub extern "C" fn cranelift_sload32_complex(ptr: *mut FunctionData, memflags: MemFlagCode, count: u32, args: * mut ValueCode, offset: Offset32) -> ValueCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().sload32_complex(convert_memflags(memflags), &argsdata, offset).as_u32();
-}
 
 #[no_mangle]
 pub extern "C" fn cranelift_istore32(ptr: *mut FunctionData, memflags: MemFlagCode, x: ValueCode, p: ValueCode, offset: Offset32) -> InstCode {
@@ -1701,20 +1556,6 @@ pub extern "C" fn cranelift_istore32(ptr: *mut FunctionData, memflags: MemFlagCo
     return inst.builder.ins().istore32(convert_memflags(memflags), Value::from_u32(x), Value::from_u32(p), offset).as_u32();
 }
 
-#[no_mangle]
-pub extern "C" fn cranelift_istore32_complex(ptr: *mut FunctionData, memflags: MemFlagCode, x: ValueCode, count: u32, args: * mut ValueCode, offset: Offset32) -> InstCode {
-   let inst = unsafe
-   {
-       assert!(!ptr.is_null());
-       & mut * ptr
-   };
-   let mut argsdata = vec![];
-    for i in 0..count {
-        argsdata.push(Value::from_u32(unsafe {*args.offset(i as isize)}));
-    }
-
-    return inst.builder.ins().istore32_complex(convert_memflags(memflags), Value::from_u32(x), &argsdata, offset).as_u32();
-}
 
 #[no_mangle]
 pub extern "C" fn cranelift_uload8x8(ptr: *mut FunctionData, memflags: MemFlagCode, p: ValueCode, offset: Offset32) -> ValueCode {
