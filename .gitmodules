@@ -14,3 +14,6 @@
 	url = https://github.com/lingo-db/llvm-project.git
 [submodule "torch-mlir/"]
 	url = https://github.com/lingo-db/torch-mlir.git
+[submodule "lib/cranelift/rust-cranelift/wasmtime"]
+	path = lib/cranelift/rust-cranelift/wasmtime
+	url = https://github.com/bytecodealliance/wasmtime.git
