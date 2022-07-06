@@ -63,6 +63,8 @@ add_subdirectory(tools/build-tools)
 add_subdirectory(lib/mlir-support)
 add_subdirectory(lib/RelAlg)
 add_subdirectory(lib/TupleStream)
+add_subdirectory(lib/SubOperator)
+
 add_subdirectory(lib/DB)
 add_subdirectory(lib/DSA)
 add_subdirectory(lib/util)
@@ -83,6 +85,7 @@ set(LIBS
         MLIROptLib
         MLIRRelAlg
         MLIRTupleStream
+        MLIRSubOperator
         MLIRUtil
         MLIRDB
         MLIRDSA
