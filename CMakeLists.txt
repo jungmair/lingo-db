@@ -131,6 +131,7 @@ add_subdirectory(src/compiler/Dialect/DB)
 add_subdirectory(src/compiler/Dialect/DSA)
 add_subdirectory(src/compiler/Dialect/util)
 add_subdirectory(src/utility)
+add_subdirectory(src/scheduler)
 
 add_subdirectory(src/compiler/Conversion/DBToStd)
 add_subdirectory(src/compiler/Conversion/DSAToStd)
