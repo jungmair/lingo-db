@@ -6,6 +6,7 @@
 #include "lingodb/compiler/mlir-support/eval.h"
 #include "lingodb/execution/Execution.h"
 #include "lingodb/execution/ResultProcessing.h"
+#include "lingodb/scheduler/Scheduler.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"

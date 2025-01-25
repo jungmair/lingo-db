@@ -234,8 +234,13 @@ class DefaultQueryExecuter : public QueryExecuter {
    public:
    using QueryExecuter::QueryExecuter;
    void execute() override {
+      scheduler->enqueueTask(std::make_unique<QueryExecutionTask>(this));
+      scheduler->join();
+   }
+   void executeInner() override {
       bool parallelismEnabled = queryExecutionConfig->parallel;
       //todo: scheduler (allow setting number of threads)
+      //    move LINGODB_PARALLELISM logic to createScheduler
       //size_t numThreads = tbb::info::default_concurrency() / 2;
       if (const char* mode = std::getenv("LINGODB_PARALLELISM")) {
          if (std::string(mode) == "OFF") {
@@ -359,7 +364,8 @@ std::unique_ptr<QueryExecutionConfig> createQueryExecutionConfig(execution::Exec
    return config;
 }
 std::unique_ptr<QueryExecuter> QueryExecuter::createDefaultExecuter(std::unique_ptr<QueryExecutionConfig> queryExecutionConfig, runtime::Session& session) {
-   return std::make_unique<DefaultQueryExecuter>(std::move(queryExecutionConfig), session.createExecutionContext());
+   auto s = scheduler::createScheduler();
+   return std::make_unique<DefaultQueryExecuter>(std::move(queryExecutionConfig), std::move(s), session.createExecutionContext());
 }
 
 } // namespace lingodb::execution

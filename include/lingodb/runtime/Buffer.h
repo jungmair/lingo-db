@@ -96,6 +96,32 @@ class FlexibleBuffer {
    }
 };
 
+// TODO: maybe need a Task class with template T
+// std::vector<T>& buffers;
+// const std::function<void(T)> cb;
+class DispatchBufferTask : public lingodb::scheduler::Task {
+   std::vector<Buffer>& buffers;
+   const std::function<void(Buffer)> cb;
+   std::atomic<size_t> startIndex{0};
+
+   public:
+   DispatchBufferTask(std::vector<Buffer>& buffers, const std::function<void(Buffer)> cb) : buffers(buffers), cb(cb) {}
+   void run() override;
+};
+
+class SplitBufferTask : public lingodb::scheduler::Task {
+   Buffer& buffer;
+   size_t bufferLen;
+   void* contextPtr;
+   const std::function<void(lingodb::runtime::Buffer, size_t, size_t, void*)> cb;
+   size_t splitSize{20000};
+   std::atomic<size_t> startIndex{0};
+
+   public:
+   SplitBufferTask(Buffer& buffer, size_t typeSize, void* contextPtr, const std::function<void(lingodb::runtime::Buffer, size_t, size_t, void*)> cb) : buffer(buffer), bufferLen(buffer.numElements / typeSize), contextPtr(contextPtr), cb(cb) {}
+   void run() override;
+};
+
 } // namespace lingodb::runtime
 
 #endif //LINGODB_RUNTIME_BUFFER_H

@@ -450,7 +450,6 @@ class Worker {
 static thread_local Worker* currentWorker;
 
 void SchedulerImpl::start() {
-   scheduler = this;
    for (size_t i = 0; i < numWorkers; i++) {
       workerThreads.emplace_back([this, i] {
          Worker worker(*this, i);
@@ -532,7 +531,11 @@ void awaitChildTask(std::unique_ptr<Task> task) {
    currentWorker->awaitChildTask(std::move(task));
 }
 std::unique_ptr<Scheduler> createScheduler(size_t numWorkers) {
-   return std::make_unique<SchedulerImpl>(numWorkers);
+   auto s = std::make_unique<SchedulerImpl>(numWorkers);
+   s->start();
+   // TODO: not good
+   scheduler = s.get();
+   return std::move(s);
 }
 void stopCurrentScheduler() {
    if (scheduler) {

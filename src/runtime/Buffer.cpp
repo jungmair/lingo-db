@@ -6,6 +6,35 @@ static utility::Tracer::Event iterateEvent("FlexibleBuffer", "iterateParallel");
 static utility::Tracer::Event bufferIteratorEvent("BufferIterator", "iterate");
 
 } // end namespace
+
+void lingodb::runtime::DispatchBufferTask::run() {
+   size_t localStartIndex = startIndex.fetch_add(1);
+   if (localStartIndex >= buffers.size()) {
+      workExhausted.store(true);
+      return;
+   }
+   auto& buffer = buffers[localStartIndex];
+   utility::Tracer::Trace trace(iterateEvent);
+   cb(buffer);
+   trace.stop();
+}
+
+void lingodb::runtime::SplitBufferTask::run() {
+   size_t localStartIndex = startIndex.fetch_add(1);
+   if (localStartIndex*splitSize >= bufferLen) {
+      workExhausted.store(true);
+      return;
+   }
+   auto begin = localStartIndex*splitSize;
+   auto end = (localStartIndex+1)*splitSize;
+   if (end > bufferLen) {
+      end = bufferLen;
+   }
+   utility::Tracer::Trace trace(iterateEvent);
+   cb(buffer, begin, end, contextPtr);
+   trace.stop();
+}
+
 bool lingodb::runtime::BufferIterator::isIteratorValid(lingodb::runtime::BufferIterator* iterator) {
    return iterator->isValid();
 }
@@ -19,12 +48,8 @@ void lingodb::runtime::BufferIterator::destroy(lingodb::runtime::BufferIterator*
    delete iterator;
 }
 void lingodb::runtime::FlexibleBuffer::iterateBuffersParallel(const std::function<void(Buffer)>& fn) {
-   //todo: scheduler
-   for (auto& buffer : buffers) {
-      utility::Tracer::Trace trace(iterateEvent);
-      fn(buffer);
-      trace.stop();
-   }
+   lingodb::scheduler::awaitChildTask(std::make_unique<DispatchBufferTask>(buffers, fn));
+   // TODO IF NEED SPLIT FOR BUFFER SIZE > 20000
    /*
    tbb::parallel_for_each(buffers.begin(), buffers.end(), [&](Buffer buffer, tbb::feeder<Buffer>& feeder) {
       if (buffer.numElements <= 20000) {
@@ -90,14 +115,9 @@ void lingodb::runtime::Buffer::iterate(bool parallel, lingodb::runtime::Buffer b
    size_t len = buffer.numElements / typeSize;
 
    auto range = tbb::blocked_range<size_t>(0, len);
-   //todo: scheduler
-   if (parallel&&false) {
-      tbb::parallel_for(range, [&](tbb::blocked_range<size_t> r) {
-         utility::Tracer::Trace trace(iterateEvent);
-         //trace.setMetaData(r.size());
-         forEachChunk(buffer, r.begin(), r.end(), contextPtr);
-         trace.stop();
-      });
+   if (parallel) {
+      // TODO: this is never triggered. parallel is set to false for window function
+      lingodb::scheduler::awaitChildTask(std::make_unique<SplitBufferTask>(buffer, typeSize, contextPtr, forEachChunk));
    } else {
       forEachChunk(buffer, 0, buffer.numElements / typeSize, contextPtr);
    }

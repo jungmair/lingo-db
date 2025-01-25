@@ -32,8 +32,8 @@ int main(int argc, char** argv) {
       queryExecutionConfig->loweringSteps.clear();
    }
    queryExecutionConfig->timingProcessor = std::make_unique<execution::TimingPrinter>(inputFileName);
-   auto executer = execution::QueryExecuter::createDefaultExecuter(std::move(queryExecutionConfig), *session);
 
+   auto executer = execution::QueryExecuter::createDefaultExecuter(std::move(queryExecutionConfig), *session);
    executer->fromFile(inputFileName);
    executer->execute();
    return 0;

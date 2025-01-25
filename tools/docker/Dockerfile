@@ -8,4 +8,3 @@ RUN pip3 install --break-system-packages lit
 ENV CC=clang-20 CXX=clang++-20
 RUN git clone https://github.com/lingo-db/llvmcov2html.git /llvmcov2html && cd /llvmcov2html && git checkout 34603a1 && make && cp bin/llvmcov2html /usr/bin/. && cd / && rm -rf /llvmcov2html
 
-
