@@ -22,7 +22,7 @@ class Scheduler {
    }
 };
 
-std::unique_ptr<Scheduler> createScheduler(size_t numWorkers = std::thread::hardware_concurrency());
+std::unique_ptr<Scheduler> createScheduler(size_t numWorkers = 0);
 void stopCurrentScheduler();
 void awaitChildTask(std::unique_ptr<Task> task);
 

@@ -450,6 +450,7 @@ class Worker {
 static thread_local Worker* currentWorker;
 
 void SchedulerImpl::start() {
+   scheduler = this;
    for (size_t i = 0; i < numWorkers; i++) {
       workerThreads.emplace_back([this, i] {
          Worker worker(*this, i);
@@ -531,10 +532,22 @@ void awaitChildTask(std::unique_ptr<Task> task) {
    currentWorker->awaitChildTask(std::move(task));
 }
 std::unique_ptr<Scheduler> createScheduler(size_t numWorkers) {
+   // two ways of setting number of workers.
+   // - if provided actual param for createScheduler, this will override LINGODB_PARALLELISM system var
+   // - if no actual param provided, LINGODB_PARALLELISM is used
+   // - if no actual param and no LINGODB_PARALLELISM provided, hardware_concurrency() is used
+   if (numWorkers == 0) {
+      // LINGODB_PARALLELISM is one of ["OFF", positive integer]
+      numWorkers = std::thread::hardware_concurrency();
+      if (const char* mode = std::getenv("LINGODB_PARALLELISM")) {
+         if (std::string(mode) == "OFF") {
+            numWorkers = 1;
+         } else if (std::stol(mode) > 0) {
+            numWorkers = std::stol(mode);
+         }
+      }
+   }
    auto s = std::make_unique<SchedulerImpl>(numWorkers);
-   s->start();
-   // TODO: not good
-   scheduler = s.get();
    return std::move(s);
 }
 void stopCurrentScheduler() {

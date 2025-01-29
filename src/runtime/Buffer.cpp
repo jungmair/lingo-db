@@ -5,35 +5,88 @@ namespace {
 static utility::Tracer::Event iterateEvent("FlexibleBuffer", "iterateParallel");
 static utility::Tracer::Event bufferIteratorEvent("BufferIterator", "iterate");
 
+class FlexibleBufferIteratorTask : public lingodb::scheduler::Task {
+   std::vector<lingodb::runtime::Buffer>& buffers;
+   size_t typeSize;
+   const std::function<void(lingodb::runtime::Buffer)> cb;
+   std::mutex mutex;
+   std::vector<size_t> bufferSteps;
+   size_t startIndex{0};
+   size_t bufferIndex{0};
+   size_t splitSize{20000};
+
+   public:
+   FlexibleBufferIteratorTask(std::vector<lingodb::runtime::Buffer>& buffers, size_t typeSize, const std::function<void(lingodb::runtime::Buffer)> cb) : buffers(buffers), typeSize(typeSize), cb(cb) {
+      for (size_t i = 0; i < buffers.size(); i ++) {
+         auto step = (buffers[i].numElements + splitSize - 1) / splitSize;
+         if (i == 0) {
+            bufferSteps.push_back(step);
+         } else {
+            bufferSteps.push_back(step+bufferSteps[i-1]);
+         }
+      }
+   }
+   void run() override {
+      size_t bufferOffset = 0;
+      {
+         const std::lock_guard<std::mutex> lock(mutex);
+         if (bufferIndex >= bufferSteps.size()) {
+            workExhausted.store(true);
+            return;
+         }
+         if (startIndex >= bufferSteps[bufferIndex]) {
+            bufferIndex++;
+            if (bufferIndex >= bufferSteps.size()) {
+               workExhausted.store(true);
+               return;
+            }
+         } else if (bufferIndex > 0) {
+            bufferOffset = startIndex - bufferSteps[bufferIndex-1];
+         }
+         startIndex++;
+      }
+      auto& buffer = buffers[bufferIndex];
+      utility::Tracer::Trace trace(iterateEvent);
+
+      size_t begin = splitSize*bufferOffset;
+      size_t end = std::min(begin + splitSize, buffer.numElements);
+      size_t len = end - begin;
+      auto buf = lingodb::runtime::Buffer{len, buffer.ptr + begin * std::max(1ul, typeSize)};
+      cb(buf);
+
+      trace.stop();
+   }
+};
+
+class BufferIteratorTask : public lingodb::scheduler::Task {
+   lingodb::runtime::Buffer& buffer;
+   size_t bufferLen;
+   void* contextPtr;
+   const std::function<void(lingodb::runtime::Buffer, size_t, size_t, void*)> cb;
+   size_t splitSize{20000};
+   std::atomic<size_t> startIndex{0};
+
+   public:
+   BufferIteratorTask(lingodb::runtime::Buffer& buffer, size_t typeSize, void* contextPtr, const std::function<void(lingodb::runtime::Buffer, size_t, size_t, void*)> cb) : buffer(buffer), bufferLen(buffer.numElements / typeSize), contextPtr(contextPtr), cb(cb) {}
+   void run() override {
+      size_t localStartIndex = startIndex.fetch_add(1);
+      if (localStartIndex*splitSize >= bufferLen) {
+         workExhausted.store(true);
+         return;
+      }
+      auto begin = localStartIndex*splitSize;
+      auto end = (localStartIndex+1)*splitSize;
+      if (end > bufferLen) {
+         end = bufferLen;
+      }
+      utility::Tracer::Trace trace(iterateEvent);
+      cb(buffer, begin, end, contextPtr);
+      trace.stop();
+   }
+
+};
+
 } // end namespace
-
-void lingodb::runtime::DispatchBufferTask::run() {
-   size_t localStartIndex = startIndex.fetch_add(1);
-   if (localStartIndex >= buffers.size()) {
-      workExhausted.store(true);
-      return;
-   }
-   auto& buffer = buffers[localStartIndex];
-   utility::Tracer::Trace trace(iterateEvent);
-   cb(buffer);
-   trace.stop();
-}
-
-void lingodb::runtime::SplitBufferTask::run() {
-   size_t localStartIndex = startIndex.fetch_add(1);
-   if (localStartIndex*splitSize >= bufferLen) {
-      workExhausted.store(true);
-      return;
-   }
-   auto begin = localStartIndex*splitSize;
-   auto end = (localStartIndex+1)*splitSize;
-   if (end > bufferLen) {
-      end = bufferLen;
-   }
-   utility::Tracer::Trace trace(iterateEvent);
-   cb(buffer, begin, end, contextPtr);
-   trace.stop();
-}
 
 bool lingodb::runtime::BufferIterator::isIteratorValid(lingodb::runtime::BufferIterator* iterator) {
    return iterator->isValid();
@@ -48,25 +101,7 @@ void lingodb::runtime::BufferIterator::destroy(lingodb::runtime::BufferIterator*
    delete iterator;
 }
 void lingodb::runtime::FlexibleBuffer::iterateBuffersParallel(const std::function<void(Buffer)>& fn) {
-   lingodb::scheduler::awaitChildTask(std::make_unique<DispatchBufferTask>(buffers, fn));
-   // TODO IF NEED SPLIT FOR BUFFER SIZE > 20000
-   /*
-   tbb::parallel_for_each(buffers.begin(), buffers.end(), [&](Buffer buffer, tbb::feeder<Buffer>& feeder) {
-      if (buffer.numElements <= 20000) {
-         utility::Tracer::Trace trace(iterateEvent);
-         //trace.setMetaData(buffer.numElements);
-         fn(buffer);
-         trace.stop();
-      } else {
-         for (size_t i = 0; i < buffer.numElements; i += 20000) {
-            size_t begin = i;
-            size_t end = std::min(i + 20000, buffer.numElements);
-            size_t len = end - begin;
-            feeder.add({len, buffer.ptr + begin * std::max(1ul, getTypeSize())});
-         }
-      }
-   });
-   */
+   lingodb::scheduler::awaitChildTask(std::make_unique<FlexibleBufferIteratorTask>(buffers, typeSize, fn));
 }
 class FlexibleBufferIterator : public lingodb::runtime::BufferIterator {
    lingodb::runtime::FlexibleBuffer& flexibleBuffer;
@@ -117,7 +152,7 @@ void lingodb::runtime::Buffer::iterate(bool parallel, lingodb::runtime::Buffer b
    auto range = tbb::blocked_range<size_t>(0, len);
    if (parallel) {
       // TODO: this is never triggered. parallel is set to false for window function
-      lingodb::scheduler::awaitChildTask(std::make_unique<SplitBufferTask>(buffer, typeSize, contextPtr, forEachChunk));
+      lingodb::scheduler::awaitChildTask(std::make_unique<BufferIteratorTask>(buffer, typeSize, contextPtr, forEachChunk));
    } else {
       forEachChunk(buffer, 0, buffer.numElements / typeSize, contextPtr);
    }

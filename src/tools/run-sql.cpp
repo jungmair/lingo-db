@@ -34,8 +34,11 @@ int main(int argc, char** argv) {
    unsetenv("PERF_BUILDID_DIR");
    queryExecutionConfig->timingProcessor = std::make_unique<execution::TimingPrinter>(inputFileName);
 
+   auto scheduler = scheduler::createScheduler();
+   scheduler->start();
    auto executer = execution::QueryExecuter::createDefaultExecuter(std::move(queryExecutionConfig), *session);
    executer->fromFile(inputFileName);
-   executer->execute();
+   scheduler->enqueueTask(std::make_unique<execution::QueryExecutionTask>(std::move(executer)));
+   scheduler->join();
    return 0;
 }

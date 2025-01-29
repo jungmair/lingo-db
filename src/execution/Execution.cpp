@@ -234,22 +234,6 @@ class DefaultQueryExecuter : public QueryExecuter {
    public:
    using QueryExecuter::QueryExecuter;
    void execute() override {
-      scheduler->enqueueTask(std::make_unique<QueryExecutionTask>(this));
-      scheduler->join();
-   }
-   void executeInner() override {
-      bool parallelismEnabled = queryExecutionConfig->parallel;
-      //todo: scheduler (allow setting number of threads)
-      //    move LINGODB_PARALLELISM logic to createScheduler
-      //size_t numThreads = tbb::info::default_concurrency() / 2;
-      if (const char* mode = std::getenv("LINGODB_PARALLELISM")) {
-         if (std::string(mode) == "OFF") {
-            parallelismEnabled = false;
-         } else {
-            //numThreads = std::stol(mode);
-         }
-      }
-
       if (!executionContext) {
          std::cerr << "Execution Context is missing" << std::endl;
          exit(1);
@@ -296,6 +280,7 @@ class DefaultQueryExecuter : public QueryExecuter {
          snapshotImportantStep("qopt", moduleOp, serializationState);
       }
 
+      bool parallelismEnabled = scheduler::getNumWorkers() == 1;
       if (!frontend.isParallelismAllowed() || !parallelismEnabled) {
          moduleOp->setAttr("subop.sequential", mlir::UnitAttr::get(moduleOp->getContext()));
          //numThreads = 1;
@@ -364,8 +349,7 @@ std::unique_ptr<QueryExecutionConfig> createQueryExecutionConfig(execution::Exec
    return config;
 }
 std::unique_ptr<QueryExecuter> QueryExecuter::createDefaultExecuter(std::unique_ptr<QueryExecutionConfig> queryExecutionConfig, runtime::Session& session) {
-   auto s = scheduler::createScheduler();
-   return std::make_unique<DefaultQueryExecuter>(std::move(queryExecutionConfig), std::move(s), session.createExecutionContext());
+   return std::make_unique<DefaultQueryExecuter>(std::move(queryExecutionConfig), session.createExecutionContext());
 }
 
 } // namespace lingodb::execution

@@ -107,12 +107,11 @@ class QueryExecuter {
    protected:
    std::unique_ptr<QueryExecutionConfig> queryExecutionConfig;
    std::unique_ptr<runtime::ExecutionContext> executionContext;
-   std::unique_ptr<scheduler::Scheduler> scheduler;
    std::optional<std::string> data;
    std::optional<std::string> file;
 
    public:
-   QueryExecuter(std::unique_ptr<QueryExecutionConfig> queryExecutionConfig, std::unique_ptr<scheduler::Scheduler> scheduler, std::unique_ptr<runtime::ExecutionContext> executionContext) : queryExecutionConfig(std::move(queryExecutionConfig)), executionContext(std::move(executionContext)), scheduler(std::move(scheduler)), data(), file() {}
+   QueryExecuter(std::unique_ptr<QueryExecutionConfig> queryExecutionConfig, std::unique_ptr<runtime::ExecutionContext> executionContext) : queryExecutionConfig(std::move(queryExecutionConfig)), executionContext(std::move(executionContext)), data(), file() {}
    void fromData(std::string data) {
       this->data = data;
    }
@@ -120,21 +119,20 @@ class QueryExecuter {
       this->file = file;
    }
    virtual void execute() = 0;
-   virtual void executeInner() = 0;
    QueryExecutionConfig& getConfig() { return *queryExecutionConfig; }
    static std::unique_ptr<QueryExecuter> createDefaultExecuter(std::unique_ptr<QueryExecutionConfig> queryExecutionConfig, runtime::Session& session);
    virtual ~QueryExecuter() {}
 };
 class QueryExecutionTask : public lingodb::scheduler::Task {
-   QueryExecuter* queryExecutor;
+   std::unique_ptr<QueryExecuter> queryExecutor;
 
    public:
-   QueryExecutionTask(QueryExecuter* queryExecutor) : queryExecutor(queryExecutor) {}
+   QueryExecutionTask(std::unique_ptr<QueryExecuter> queryExecutor) : queryExecutor(std::move(queryExecutor)) {}
    void run() override {
       if (workExhausted.exchange(true)) {
          return;
       }
-      queryExecutor->executeInner();
+      queryExecutor->execute();
       //todo: scheduler (we shouldn't stop the scheduler here, but easiest for prototype)
       lingodb::scheduler::stopCurrentScheduler();
    }
