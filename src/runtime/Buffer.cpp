@@ -1,60 +1,116 @@
 #include "lingodb/runtime/Buffer.h"
 #include "lingodb/utility/Tracer.h"
 #include <iostream>
+#include <mutex>
+#include <boost/chrono/thread_clock.hpp>
 namespace {
 static utility::Tracer::Event iterateEvent("FlexibleBuffer", "iterateParallel");
 static utility::Tracer::Event bufferIteratorEvent("BufferIterator", "iterate");
+
+// TODO RENAME
+class WorkerLocalState {
+   public:
+   std::mutex mutex;
+   bool hasMore{false};
+   int unitId{0};
+   size_t unitAmount;
+   size_t bufferId;
+   // workerId steal task from
+   size_t stealWorkerId{std::numeric_limits<size_t>::max()};
+
+   int fetchAndNext() {
+      size_t cur;
+      {
+         std::lock_guard<std::mutex> stateLock(this->mutex);
+         cur = unitId;
+         unitId++;
+         hasMore = unitId < unitAmount;
+      }
+      if (cur >= unitAmount) {
+         return -1;
+      }
+      return cur;
+   }
+};
 
 class FlexibleBufferIteratorTask : public lingodb::scheduler::Task {
    std::vector<lingodb::runtime::Buffer>& buffers;
    size_t typeSize;
    const std::function<void(lingodb::runtime::Buffer)> cb;
-   std::mutex mutex;
-   std::vector<size_t> bufferSteps;
-   size_t startIndex{0};
-   size_t bufferIndex{0};
+   std::atomic<size_t> startIndex{0};
    size_t splitSize{20000};
+   std::vector<std::unique_ptr<WorkerLocalState>> workerLocalStates;
 
    public:
    FlexibleBufferIteratorTask(std::vector<lingodb::runtime::Buffer>& buffers, size_t typeSize, const std::function<void(lingodb::runtime::Buffer)> cb) : buffers(buffers), typeSize(typeSize), cb(cb) {
-      for (size_t i = 0; i < buffers.size(); i ++) {
-         auto step = (buffers[i].numElements + splitSize - 1) / splitSize;
-         if (i == 0) {
-            bufferSteps.push_back(step);
-         } else {
-            bufferSteps.push_back(step+bufferSteps[i-1]);
-         }
+      for (size_t i = 0; i < lingodb::scheduler::getNumWorkers(); i++) {
+         workerLocalStates.emplace_back(std::make_unique<WorkerLocalState>());
       }
    }
-   void run() override {
-      size_t bufferOffset = 0;
-      {
-         const std::lock_guard<std::mutex> lock(mutex);
-         if (bufferIndex >= bufferSteps.size()) {
-            workExhausted.store(true);
-            return;
-         }
-         if (startIndex >= bufferSteps[bufferIndex]) {
-            bufferIndex++;
-            if (bufferIndex >= bufferSteps.size()) {
-               workExhausted.store(true);
-               return;
-            }
-         } else if (bufferIndex > 0) {
-            bufferOffset = startIndex - bufferSteps[bufferIndex-1];
-         }
-         startIndex++;
+   void unitRun(size_t bufferId, int unitId) {
+      auto& buffer = buffers[bufferId];
+      if (unitId < 0) {
+         return;
       }
-      auto& buffer = buffers[bufferIndex];
-      utility::Tracer::Trace trace(iterateEvent);
-
-      size_t begin = splitSize*bufferOffset;
-      size_t end = std::min(begin + splitSize, buffer.numElements);
-      size_t len = end - begin;
+      size_t begin = splitSize*unitId;
+      size_t len = std::min(begin + splitSize, buffer.numElements) - begin;
       auto buf = lingodb::runtime::Buffer{len, buffer.ptr + begin * std::max(1ul, typeSize)};
       cb(buf);
+   }
 
-      trace.stop();
+   void run() override {
+      auto state = workerLocalStates[lingodb::scheduler::currentWorkerId()].get();
+      if (state->hasMore) {
+         unitRun(state->bufferId, state->fetchAndNext());
+         return;
+      }
+
+      // TODO TRACE
+      if (startIndex < buffers.size()) {
+         size_t localStartIndex = startIndex.fetch_add(1);
+         if (localStartIndex < buffers.size()) {
+            auto& buffer = buffers[localStartIndex];
+            if (buffer.numElements < splitSize) {
+               cb(buffer);
+            } else {
+               auto unitAmount = (buffer.numElements + splitSize - 1) / splitSize;
+               {
+                  std::lock_guard resetLock(state->mutex);
+                  state->hasMore = true;
+                  state->unitId = 1;
+                  state->bufferId = localStartIndex;
+                  state->unitAmount = unitAmount;
+               }
+               unitRun(state->bufferId, 0);
+            }
+            return;
+         }
+      }
+
+      if (state->stealWorkerId != std::numeric_limits<size_t>::max()) {
+         auto other = workerLocalStates[state->stealWorkerId].get();
+         if (other->hasMore) {
+            unitRun(other->bufferId, other->fetchAndNext());
+            return;
+         }
+         state->stealWorkerId = std::numeric_limits<size_t>::max();
+      }
+
+      for (size_t i = 1; i < workerLocalStates.size(); i ++) {
+         auto idx = lingodb::scheduler::currentWorkerId() + i;
+         if (idx >= workerLocalStates.size()) {
+            idx -= workerLocalStates.size();
+         }
+         auto other = workerLocalStates[idx].get();
+         if (other->hasMore) {
+            // only current worker can modify its onw stealWorkerId. no need to lock
+            state->stealWorkerId = idx;
+            unitRun(other->bufferId, other->fetchAndNext());
+            return;
+         }
+      }
+
+      workExhausted.store(true);
    }
 };
 
