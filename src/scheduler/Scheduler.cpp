@@ -115,8 +115,12 @@ struct TaskWrapper {
       return !task->hasWork() && nonCompletedFibers.load() == 0;
    }
 
-   void startFiber() {
-      nonCompletedFibers++;
+   bool startFiber() {
+      if (task->hasWork()) {
+         nonCompletedFibers++;
+         return true;
+      }
+      return false;
    }
 
    bool finishFiber() {
@@ -335,7 +339,7 @@ class Worker {
    public:
    //for cheaply collecting idle workers
    Worker* nextIdleWorker = nullptr;
-   bool isInIdleList = false;
+   std::atomic<bool> isInIdleList = false;
    // for sleeping / waking up if there is nothing to do
    std::mutex mutex;
    std::condition_variable cv;
@@ -413,11 +417,10 @@ class Worker {
                currTask = scheduler.getTask();
             }
 
-            if (currTask) {
+            if (currTask && currTask->startFiber()) {
                //work on (part of) (new) task
                currentFiber = fiberAllocator.allocate();
                assert(currentFiber);
-               currTask->startFiber();
                auto fiberDone = currentFiber->run(this, currTask, [&] {
                   currTask->task->run();
                });
@@ -494,6 +497,7 @@ void SchedulerImpl::enqueueTask(TaskWrapper* wrapper) {
       currWorker->isInIdleList = false;
       idleWorkers = idleWorkers->nextIdleWorker;
 
+      std::unique_lock workerLock(currWorker->mutex);
       currWorker->cv.notify_one();
    }
 }
@@ -506,11 +510,11 @@ void SchedulerImpl::putWorkerToSleep(Worker* worker) {
    std::unique_lock workerLock(worker->mutex);
    if (worker->allowedToSleep) {
       //std::cout << "Putting worker to sleep " << worker->workerId << std::endl;
-      if (!worker->isInIdleList) {
-         worker->nextIdleWorker = idleWorkers;
-         idleWorkers = worker;
-         worker->isInIdleList = true;
+      if (worker->isInIdleList.exchange(true)) {
+         return;
       }
+      worker->nextIdleWorker = idleWorkers;
+      idleWorkers = worker;
       lock.unlock();
       worker->cv.wait(workerLock);
    } else {
@@ -528,6 +532,12 @@ void TaskWrapper::finalize() {
    }
 }
 
+void awaitEntryTask(std::unique_ptr<EntryTask> task) {
+   TaskWrapper* taskWrapper = new TaskWrapper{std::move(task)};
+   // TDOO only wake up one worker
+   scheduler->enqueueTask(taskWrapper);
+   (static_cast<EntryTask*>(taskWrapper->task.get()))->await();
+}
 void awaitChildTask(std::unique_ptr<Task> task) {
    currentWorker->awaitChildTask(std::move(task));
 }

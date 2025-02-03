@@ -2,13 +2,11 @@
 #include "lingodb/utility/Tracer.h"
 #include <iostream>
 #include <mutex>
-#include <boost/chrono/thread_clock.hpp>
 namespace {
 static utility::Tracer::Event iterateEvent("FlexibleBuffer", "iterateParallel");
 static utility::Tracer::Event bufferIteratorEvent("BufferIterator", "iterate");
 
-// TODO RENAME
-class WorkerLocalState {
+class FlexibleBufferWorkerLocalState {
    public:
    std::mutex mutex;
    bool hasMore{false};
@@ -39,12 +37,12 @@ class FlexibleBufferIteratorTask : public lingodb::scheduler::Task {
    const std::function<void(lingodb::runtime::Buffer)> cb;
    std::atomic<size_t> startIndex{0};
    size_t splitSize{20000};
-   std::vector<std::unique_ptr<WorkerLocalState>> workerLocalStates;
+   std::vector<std::unique_ptr<FlexibleBufferWorkerLocalState>> workerLocalStates;
 
    public:
    FlexibleBufferIteratorTask(std::vector<lingodb::runtime::Buffer>& buffers, size_t typeSize, const std::function<void(lingodb::runtime::Buffer)> cb) : buffers(buffers), typeSize(typeSize), cb(cb) {
       for (size_t i = 0; i < lingodb::scheduler::getNumWorkers(); i++) {
-         workerLocalStates.emplace_back(std::make_unique<WorkerLocalState>());
+         workerLocalStates.emplace_back(std::make_unique<FlexibleBufferWorkerLocalState>());
       }
    }
    void unitRun(size_t bufferId, int unitId) {
@@ -52,10 +50,12 @@ class FlexibleBufferIteratorTask : public lingodb::scheduler::Task {
       if (unitId < 0) {
          return;
       }
+      utility::Tracer::Trace trace(iterateEvent);
       size_t begin = splitSize*unitId;
       size_t len = std::min(begin + splitSize, buffer.numElements) - begin;
       auto buf = lingodb::runtime::Buffer{len, buffer.ptr + begin * std::max(1ul, typeSize)};
       cb(buf);
+      trace.stop();
    }
 
    void run() override {
@@ -64,8 +64,10 @@ class FlexibleBufferIteratorTask : public lingodb::scheduler::Task {
          unitRun(state->bufferId, state->fetchAndNext());
          return;
       }
+      if (workExhausted.load()) {
+         return;
+      }
 
-      // TODO TRACE
       if (startIndex < buffers.size()) {
          size_t localStartIndex = startIndex.fetch_add(1);
          if (localStartIndex < buffers.size()) {
@@ -97,10 +99,8 @@ class FlexibleBufferIteratorTask : public lingodb::scheduler::Task {
       }
 
       for (size_t i = 1; i < workerLocalStates.size(); i ++) {
-         auto idx = lingodb::scheduler::currentWorkerId() + i;
-         if (idx >= workerLocalStates.size()) {
-            idx -= workerLocalStates.size();
-         }
+         // make sure index of worker to steal never exceed worker number limits
+         auto idx = (lingodb::scheduler::currentWorkerId() + i) % workerLocalStates.size();
          auto other = workerLocalStates[idx].get();
          if (other->hasMore) {
             // only current worker can modify its onw stealWorkerId. no need to lock
@@ -204,8 +204,6 @@ void lingodb::runtime::BufferIterator::iterate(lingodb::runtime::BufferIterator*
 
 void lingodb::runtime::Buffer::iterate(bool parallel, lingodb::runtime::Buffer buffer, size_t typeSize, void (*forEachChunk)(lingodb::runtime::Buffer, size_t, size_t, void*), void* contextPtr) {
    size_t len = buffer.numElements / typeSize;
-
-   auto range = tbb::blocked_range<size_t>(0, len);
    if (parallel) {
       // TODO: this is never triggered. parallel is set to false for window function
       lingodb::scheduler::awaitChildTask(std::make_unique<BufferIteratorTask>(buffer, typeSize, contextPtr, forEachChunk));

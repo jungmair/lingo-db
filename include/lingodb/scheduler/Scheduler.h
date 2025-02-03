@@ -24,6 +24,7 @@ class Scheduler {
 
 std::unique_ptr<Scheduler> createScheduler(size_t numWorkers = 0);
 void stopCurrentScheduler();
+void awaitEntryTask(std::unique_ptr<EntryTask> task);
 void awaitChildTask(std::unique_ptr<Task> task);
 
 

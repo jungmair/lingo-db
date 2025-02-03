@@ -2,7 +2,7 @@
 #include "lingodb/runtime/helpers.h"
 #include "lingodb/utility/Tracer.h"
 #include <iostream>
-#include <oneapi/tbb.h>
+
 namespace {
 static utility::Tracer::Event createEvent("OHtFragment", "create");
 static utility::Tracer::Event mergeEvent("Oht", "merge");
