@@ -269,15 +269,19 @@ class SchedulerImpl : public Scheduler {
                dequeueTaskLocked(task);
             }
          }
+         // - If alreadyCoolingDown is true, last attempt to dequeue task is failed. task is appedn to coolingDown queue. need to remove it.
+         // - If alreadyCoolingDown is false, last attempt to dequeue task is ok. task is not inserted to coolingDown queue. no need to remove it.
          if (alreadyCoolingDown) {
             std::lock_guard lock(coolingDownMutex);
-            if (coolingDownTail) {
-               coolingDownTail->next = task;
-               task->prev = coolingDownTail;
-               coolingDownTail = task;
+            if (task->prev) {
+               task->prev->next = task->next;
             } else {
-               coolingDownHead = task;
-               coolingDownTail = task;
+               coolingDownHead = task->next;
+            }
+            if (task->next) {
+               task->next->prev = task->prev;
+            } else {
+               coolingDownTail = task->prev;
             }
          }
       }
@@ -494,10 +498,10 @@ void SchedulerImpl::enqueueTask(TaskWrapper* wrapper) {
    while (idleWorkers) {
       assert(cntr++ < numWorkers);
       Worker* currWorker = idleWorkers;
+      std::unique_lock workerLock(currWorker->mutex);
       currWorker->isInIdleList = false;
       idleWorkers = idleWorkers->nextIdleWorker;
 
-      std::unique_lock workerLock(currWorker->mutex);
       currWorker->cv.notify_one();
    }
 }
@@ -532,11 +536,16 @@ void TaskWrapper::finalize() {
    }
 }
 
-void awaitEntryTask(std::unique_ptr<EntryTask> task) {
+// TODO MANY DELETE awaitEntryTask use enqueueTask + await in caller side
+void awaitEntryTask(std::unique_ptr<EntryTask> task, std::function<void()> beforeDestroyFn) {
    TaskWrapper* taskWrapper = new TaskWrapper{std::move(task)};
    // TDOO only wake up one worker
    scheduler->enqueueTask(taskWrapper);
    (static_cast<EntryTask*>(taskWrapper->task.get()))->await();
+   if (beforeDestroyFn != nullptr) {
+      beforeDestroyFn();
+   }
+   scheduler->returnTask(taskWrapper);
 }
 void awaitChildTask(std::unique_ptr<Task> task) {
    currentWorker->awaitChildTask(std::move(task));

@@ -357,16 +357,17 @@ void runQuery(runtime::Session& session, const std::vector<std::string>& lines, 
 
    auto executer = execution::QueryExecuter::createDefaultExecuter(std::move(queryExecutionConfig), session);
    executer->fromData(query);
-   scheduler::awaitEntryTask(std::make_unique<execution::QueryExecutionTask>(std::move(executer)));
-   std::string result = std::to_string(resultHasherRef.numValues) + " values hashing to " + resultHasherRef.hash + "\n";
-   auto resultLines = std::regex_replace(resultHasherRef.lines, std::regex("\\s+\n"), "\n");
-   if (result != expectedResult && !compareFuzzy(expectedResult, resultLines)) {
-      std::cerr << "executing:" << description << std::endl;
-      std::cerr << "ERROR: result did not match" << std::endl;
-      std::cerr << "RESULT: \"" << result << "\"" << std::endl;
-      std::cerr << "LINES: \"" << resultHasherRef.lines << "\"" << std::endl;
-      exit(1);
-   }
+   scheduler::awaitEntryTask(std::make_unique<execution::QueryExecutionTask>(std::move(executer)), [&]() {
+      std::string result = std::to_string(resultHasherRef.numValues) + " values hashing to " + resultHasherRef.hash + "\n";
+      auto resultLines = std::regex_replace(resultHasherRef.lines, std::regex("\\s+\n"), "\n");
+      if (result != expectedResult && !compareFuzzy(expectedResult, resultLines)) {
+         std::cerr << "executing:" << description << std::endl;
+         std::cerr << "ERROR: result did not match" << std::endl;
+         std::cerr << "RESULT: \"" << result << "\"" << std::endl;
+         std::cerr << "LINES: \"" << resultHasherRef.lines << "\"" << std::endl;
+         exit(1);
+      }
+   });
 }
 } // namespace
 int main(int argc, char** argv) {
