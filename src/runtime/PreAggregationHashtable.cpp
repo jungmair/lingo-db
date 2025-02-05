@@ -80,7 +80,6 @@ lingodb::runtime::PreAggregationHashtable* lingodb::runtime::PreAggregationHasht
    }
    auto* res = new PreAggregationHashtable();
    context->registerState({res, [](void* ptr) { delete reinterpret_cast<PreAggregationHashtable*>(ptr); }});
-   // TODO: for input.size() == 0, don't dispatch to fiber, use main thread
    auto handleMerge = [&](std::vector<FlexibleBuffer*>& input) {
       size_t id = &input - &outputs[0];
       utility::Tracer::Trace trace(mergePartitionEvent);

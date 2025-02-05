@@ -1,6 +1,9 @@
 #include <unordered_map>
 #include <mutex>
 
+// A map with mutex when reading and writing. It is suitable for low concurrency. High concurrency 
+// may have performance issue because mutex always lock the whole map. For High concurrency, 
+// an alternative with mutex locking only buckets should be considered.
 template <typename T, typename P>
 class ConcurrentMap
 {

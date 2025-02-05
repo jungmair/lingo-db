@@ -64,6 +64,8 @@ class FlexibleBufferIteratorTask : public lingodb::scheduler::Task {
          unitRun(state->bufferId, state->fetchAndNext());
          return;
       }
+      // quick check for exhaust. workExhausted is true if there is no more buffer or no more 
+      // work unit in own local state or steal from other workers.
       if (workExhausted.load()) {
          return;
       }
@@ -77,6 +79,7 @@ class FlexibleBufferIteratorTask : public lingodb::scheduler::Task {
             } else {
                auto unitAmount = (buffer.numElements + splitSize - 1) / splitSize;
                {
+                  // reset local state
                   std::lock_guard resetLock(state->mutex);
                   state->hasMore = true;
                   state->unitId = 1;

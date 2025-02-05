@@ -343,7 +343,7 @@ class Worker {
    public:
    //for cheaply collecting idle workers
    Worker* nextIdleWorker = nullptr;
-   std::atomic<bool> isInIdleList = false;
+   bool isInIdleList = false;
    // for sleeping / waking up if there is nothing to do
    std::mutex mutex;
    std::condition_variable cv;
@@ -514,11 +514,11 @@ void SchedulerImpl::putWorkerToSleep(Worker* worker) {
    std::unique_lock workerLock(worker->mutex);
    if (worker->allowedToSleep) {
       //std::cout << "Putting worker to sleep " << worker->workerId << std::endl;
-      if (worker->isInIdleList.exchange(true)) {
-         return;
+      if (!worker->isInIdleList) {
+         worker->nextIdleWorker = idleWorkers;
+         idleWorkers = worker;
+         worker->isInIdleList = true;
       }
-      worker->nextIdleWorker = idleWorkers;
-      idleWorkers = worker;
       lock.unlock();
       worker->cv.wait(workerLock);
    } else {
@@ -536,10 +536,8 @@ void TaskWrapper::finalize() {
    }
 }
 
-// TODO MANY DELETE awaitEntryTask use enqueueTask + await in caller side
 void awaitEntryTask(std::unique_ptr<EntryTask> task, std::function<void()> beforeDestroyFn) {
    TaskWrapper* taskWrapper = new TaskWrapper{std::move(task)};
-   // TDOO only wake up one worker
    scheduler->enqueueTask(taskWrapper);
    (static_cast<EntryTask*>(taskWrapper->task.get()))->await();
    if (beforeDestroyFn != nullptr) {
