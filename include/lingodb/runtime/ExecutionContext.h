@@ -9,7 +9,6 @@
 
 #include <lingodb/scheduler/Scheduler.h>
 #include "ConcurrentMap.h"
-#include <oneapi/tbb.h>
 namespace lingodb::runtime {
 class Database;
 //some state required for query processing;
