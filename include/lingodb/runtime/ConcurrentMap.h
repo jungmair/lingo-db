@@ -1,3 +1,5 @@
+#ifndef LINGODB_CONCURRENT_MAP_H
+#define LINGODB_CONCURRENT_MAP_H
 #include <unordered_map>
 #include <mutex>
 
@@ -13,34 +15,35 @@ private:
 
 public:
     bool contains(const T& key) {
-        std::unique_lock<std::mutex> lock(mutex);
+        std::unique_lock lock(mutex);
         return m.contains(key);
     }
     P& get(const T& key) {
-        std::unique_lock<std::mutex> lock(mutex);
+        std::unique_lock lock(mutex);
         return m.get(key);
     }
     bool insert(const T& key, const P& val) {
-        std::unique_lock<std::mutex> lock(mutex);
+        std::unique_lock lock(mutex);
         const bool ok = m.insert({key, val}).second;
         return ok;
     }
     void erase(const T& key) {
-        std::unique_lock<std::mutex> lock(mutex);
+        std::unique_lock lock(mutex);
         m.erase(key);
     }
     void clear() {
-        std::unique_lock<std::mutex> lock(mutex);
+        std::unique_lock lock(mutex);
         m.clear();
     }
     size_t size() const {
-        std::unique_lock<std::mutex> lock(mutex);
+        std::unique_lock lock(mutex);
         return m.size();
     }
     void forEach(std::function<void(const T& key, const P& val)> f) {
-        std::unique_lock<std::mutex> lock(mutex);
+        std::unique_lock lock(mutex);
         for (auto p : m) {
             f(p.first, p.second);
         }
     }
 };
+#endif //LINGODB_CONCURRENT_MAP_H
