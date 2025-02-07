@@ -59,14 +59,14 @@ class FlexibleBufferIteratorTask : public lingodb::scheduler::Task {
    }
 
    void run() override {
-      auto state = workerLocalStates[lingodb::scheduler::currentWorkerId()].get();
-      if (state->hasMore) {
-         unitRun(state->bufferId, state->fetchAndNext());
-         return;
-      }
       // quick check for exhaust. workExhausted is true if there is no more buffer or no more 
       // work unit in own local state or steal from other workers.
       if (workExhausted.load()) {
+         return;
+      }
+      auto state = workerLocalStates[lingodb::scheduler::currentWorkerId()].get();
+      if (state->hasMore) {
+         unitRun(state->bufferId, state->fetchAndNext());
          return;
       }
 
