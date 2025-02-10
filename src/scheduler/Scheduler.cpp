@@ -108,6 +108,7 @@ struct TaskWrapper {
    std::atomic<int64_t> nonCompletedFibers = 0;
    std::atomic<int64_t> deployedOnWorkers = 0;
    std::unique_ptr<Fiber> waitingOnTaskCompletion;
+   std::function<void()> beforeDestroyFn;
 
    void finalize();
 
@@ -238,6 +239,9 @@ class SchedulerImpl : public Scheduler {
       task->deployedOnWorkers--;
       if (task->finalized) {
          if (task->deployedOnWorkers.load() == 0) {
+            if (task->beforeDestroyFn) {
+               task->beforeDestroyFn();
+            }
             delete task;
          }
       }
@@ -399,7 +403,9 @@ class Worker {
                if (currentFiber->getTask()) {
                   currentFiber->getTask()->unYieldFiber();
                }
+               auto resumeTask = currentFiber->getTask();
                handleFiberComplete();
+               scheduler.returnTask(resumeTask);
             }
             assert(!currentFiber);
          }
@@ -421,7 +427,12 @@ class Worker {
                currTask = scheduler.getTask();
             }
 
-            if (currTask && currTask->startFiber()) {
+            if (currTask) {
+               if (!currTask->startFiber()) {
+                  scheduler.returnTask(currTask);
+                  continue;
+               }
+            // if (currTask && currTask->startFiber()) {
                //work on (part of) (new) task
                currentFiber = fiberAllocator.allocate();
                assert(currentFiber);
@@ -432,6 +443,8 @@ class Worker {
                   handleFiberComplete();
                } else {
                   currTask->yieldFiber();
+                  // yielded fiber does't finished. continue and not execute following cleanup logic.
+                  continue;
                }
                if (currTask->task->hasWork()) {
                   std::lock_guard lock(mutex);
@@ -536,14 +549,16 @@ void TaskWrapper::finalize() {
    }
 }
 
-void awaitEntryTask(std::unique_ptr<EntryTask> task, std::function<void()> beforeDestroyFn) {
+void awaitEntryTask(std::unique_ptr<Task> task) {
    TaskWrapper* taskWrapper = new TaskWrapper{std::move(task)};
+   std::condition_variable finished;
+   std::mutex mutex;
+   taskWrapper->beforeDestroyFn = [&]() {
+      finished.notify_one();
+   };
    scheduler->enqueueTask(taskWrapper);
-   (static_cast<EntryTask*>(taskWrapper->task.get()))->await();
-   if (beforeDestroyFn != nullptr) {
-      beforeDestroyFn();
-   }
-   scheduler->returnTask(taskWrapper);
+   std::unique_lock lk(mutex);
+   finished.wait(lk);
 }
 void awaitChildTask(std::unique_ptr<Task> task) {
    currentWorker->awaitChildTask(std::move(task));
