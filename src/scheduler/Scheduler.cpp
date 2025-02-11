@@ -145,6 +145,7 @@ class SchedulerImpl : public Scheduler {
    std::vector<std::thread> workerThreads;
    Worker* idleWorkers = nullptr;
    std::mutex taskQueueMutex;
+   std::mutex taskReturnMutex;
    TaskWrapper* taskHead = nullptr;
    TaskWrapper* taskTail = nullptr;
 
@@ -236,9 +237,12 @@ class SchedulerImpl : public Scheduler {
    }
 
    void returnTask(TaskWrapper* task) {
-      task->deployedOnWorkers--;
+      // Multiple worker may call here concurrently. Avoid one worker already called `delete task` 
+      // but another worker is still at `task->finalized`
+      std::lock_guard lock(taskReturnMutex);
+      auto deployedNum = task->deployedOnWorkers.fetch_sub(1);
       if (task->finalized) {
-         if (task->deployedOnWorkers.load() == 0) {
+         if (deployedNum == 1) {
             if (task->beforeDestroyFn) {
                task->beforeDestroyFn();
             }
