@@ -1,6 +1,5 @@
 #ifndef LINGODB_EXECUTION_EXECUTION_H
 #define LINGODB_EXECUTION_EXECUTION_H
-#include <functional>
 #include "Backend.h"
 #include "Error.h"
 #include "Frontend.h"
@@ -8,6 +7,7 @@
 #include "ResultProcessing.h"
 #include "Timing.h"
 #include "lingodb/scheduler/Scheduler.h"
+#include <functional>
 namespace mlir {
 class ModuleOp;
 } // namespace mlir

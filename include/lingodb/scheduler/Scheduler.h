@@ -2,9 +2,9 @@
 #ifndef LINGODB_SCHEDULER_SCHEDULER_H
 #define LINGODB_SCHEDULER_SCHEDULER_H
 #include "lingodb/scheduler/Task.h"
+#include <functional>
 #include <memory>
 #include <thread>
-#include <functional>
 namespace lingodb::scheduler {
 class Scheduler {
    protected:
