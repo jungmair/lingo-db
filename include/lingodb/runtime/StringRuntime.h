@@ -32,6 +32,11 @@ struct StringRuntime {
    static VarLen32 substr(VarLen32 str, int64_t from, int64_t len);
    static VarLen32 regexpReplace(VarLen32 str, VarLen32 pattern, VarLen32 replace);
    static VarLen32 toUpper(VarLen32 str);
+   static VarLen32 toLower(VarLen32 str);
+   static bool contains(VarLen32 str, VarLen32 substr);
+   static int64_t pyFind(VarLen32 str, VarLen32 needle, int64_t start, int64_t end);
+   static int64_t pyRFind(VarLen32 str, VarLen32 needle, int64_t start, int64_t end);
+   static VarLen32 replace(VarLen32 str, VarLen32 oldVal, VarLen32 newVal);
    static VarLen32 concat(VarLen32 a, VarLen32 b);
    static size_t findMatch(VarLen32 str, VarLen32 needle, size_t start, size_t end);
    static size_t findNext(VarLen32 str, VarLen32 needle, size_t start);
