@@ -200,7 +200,9 @@ ArrowColumn* ArrowColumnBuilder::finish() {
    return new ArrowColumn(column);
 }
 void ArrowColumnBuilder::merge(ArrowColumnBuilder* other) {
-   auto array = other->builder->Finish().ValueOrDie();
-   additionalArrays.push_back(cast(array, type));
-   additionalArrays.insert(additionalArrays.end(), other->additionalArrays.begin(), other->additionalArrays.end());
+   if(other->numValues) {
+      auto array = other->builder->Finish().ValueOrDie();
+      additionalArrays.push_back(cast(array, type));
+      additionalArrays.insert(additionalArrays.end(), other->additionalArrays.begin(), other->additionalArrays.end());
+   }
 }

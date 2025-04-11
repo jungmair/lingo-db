@@ -10,7 +10,11 @@
 #include "lingodb/compiler/runtime/RelationHelper.h"
 #include "lingodb/utility/Serialization.h"
 
+#include <llvm/Support/SourceMgr.h>
+
+#include <filesystem>
 #include <regex>
+#include <mlir/Parser/Parser.h>
 
 namespace {
 using namespace lingodb::compiler::dialect;
@@ -318,6 +322,7 @@ mlir::Value frontend::sql::Parser::translateWhenCaseExpression(mlir::OpBuilder& 
 
    return ifOp.getResult(0);
 }
+
 mlir::Value frontend::sql::Parser::translateFuncCallExpression(Node* node, mlir::OpBuilder& builder, mlir::Location loc, TranslationContext& context) {
    auto* funcCall = reinterpret_cast<FuncCall*>(node);
    //expr = FuncCallTransform(parse_result,,context);
@@ -363,6 +368,80 @@ mlir::Value frontend::sql::Parser::translateFuncCallExpression(Node* node, mlir:
 
       auto packed = builder.create<util::PackOp>(loc, values);
       return builder.create<db::Hash>(loc, builder.getIndexType(), packed);
+   }
+   auto inputFilename = "functions/" + funcName + ".mlir";
+   if (std::filesystem::exists(inputFilename)) {
+      mlir::OwningOpRef<mlir::ModuleOp> module;
+      llvm::SourceMgr sourceMgr;
+      mlir::SourceMgrDiagnosticHandler sourceMgrHandler(sourceMgr, builder.getContext());
+      llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> fileOrErr =
+         llvm::MemoryBuffer::getFileOrSTDIN(inputFilename);
+      if (std::error_code ec = fileOrErr.getError()) {
+         throw std::runtime_error("Could not open input file: " + ec.message() + "\n");
+      }
+
+      // Parse the input mlir.
+      sourceMgr.AddNewSourceBuffer(std::move(*fileOrErr), llvm::SMLoc());
+      module = mlir::parseSourceFile<mlir::ModuleOp>(sourceMgr, builder.getContext());
+      if (!module) {
+         throw std::runtime_error("Error can't load file " + inputFilename + "\n");
+      }
+      std::vector<mlir::Operation*> toMove;
+      for (auto& op : module->getOps()) {
+         toMove.push_back(&op);
+      }
+      for (auto* op : toMove) {
+         op->remove();
+         if (auto funcOp = mlir::dyn_cast<mlir::func::FuncOp>(op)) {
+            funcOp.setSymVisibility("private");
+         }
+         moduleOp.getBody()->push_back(op);
+      }
+      std::vector<mlir::Value> values;
+      std::vector<mlir::Value> isNull;
+      for (auto* cell = funcCall->args_->head; cell != nullptr; cell = cell->next) {
+         mlir::Value translatedArg = translateExpression(builder, reinterpret_cast<Node*>(cell->data.ptr_value), context);
+         values.push_back(translatedArg);
+         if (mlir::isa<db::NullableType>(translatedArg.getType())) {
+            isNull.push_back(builder.create<db::IsNullOp>(loc, translatedArg));
+         }
+      }
+      if (isNull.size() > 0) {
+         auto allNotNull = builder.create<db::OrOp>(loc, isNull);
+         auto* elseBlock = new mlir::Block;
+         mlir::Type resType;
+         {
+            mlir::OpBuilder::InsertionGuard guard(builder);
+            builder.setInsertionPointToStart(elseBlock);
+            std::vector<mlir::Value> notNullValues;
+            for (auto v : values) {
+               notNullValues.push_back(mlir::isa<db::NullableType>(v.getType()) ? builder.create<db::NullableGetVal>(loc, mlir::cast<db::NullableType>(v.getType()).getType(), v) : v);
+            }
+            auto func = mlir::cast<mlir::func::FuncOp>(moduleOp.lookupSymbol(funcName));
+            auto res = builder.create<mlir::func::CallOp>(loc, func, notNullValues).getResult(0);
+            mlir::Value resNullable = builder.create<db::AsNullableOp>(loc, db::NullableType::get(res.getType()), res);
+
+            resType = resNullable.getType();
+            builder.create<mlir::scf::YieldOp>(loc, resNullable);
+         }
+         auto* thenBlock = new mlir::Block;
+
+         {
+            mlir::OpBuilder::InsertionGuard guard(builder);
+            builder.setInsertionPointToStart(thenBlock);
+            mlir::Value res = builder.create<db::NullOp>(loc, resType);
+            builder.create<mlir::scf::YieldOp>(loc, res);
+         }
+         auto ifOp = builder.create<mlir::scf::IfOp>(loc, mlir::TypeRange{resType}, allNotNull, false);
+         ifOp.getThenRegion().getBlocks().clear();
+         ifOp.getThenRegion().push_back(thenBlock);
+         ifOp.getElseRegion().getBlocks().clear();
+         ifOp.getElseRegion().push_back(elseBlock);
+         return ifOp.getResult(0);
+      }
+      auto func = mlir::cast<mlir::func::FuncOp>(moduleOp.lookupSymbol(funcName));
+
+      return builder.create<mlir::func::CallOp>(loc, func, values).getResult(0);
    }
    throw std::runtime_error("could not translate func call");
    return mlir::Value();

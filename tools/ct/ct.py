@@ -74,7 +74,8 @@ def main():
     env_vars = {
         "LINGODB_EXECUTION_MODE": "SPEED",
         "LINGODB_SNAPSHOT_PASSES": "true",
-        "LINGODB_SNAPSHOT_DIR": "./snapshots"
+        "LINGODB_SNAPSHOT_DIR": "./snapshots",
+        "LINGODB_PARALLELISM": "16"
     }
 
     # Define directories and filenames
@@ -170,7 +171,8 @@ def main():
             "LINGODB_EXECUTION_MODE": "PERF",
             "LINGODB_BACKEND_ONLY": "true",
             "LINGODB_COMPILATION_LLVM_LOWERING": "false",
-            "LINGODB_TRACE_DIR": "/tmp"
+            "LINGODB_TRACE_DIR": "/tmp",
+            "LINGODB_PARALLELISM": "16"
         }
 
         command_perf = f'env {" ".join([f"{k}={v}" for k, v in perf_env_vars.items()])}  {bin_dir}/run-mlir {extracted_llvm_filename}.alt {data_dir}'

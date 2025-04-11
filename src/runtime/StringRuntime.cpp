@@ -225,6 +225,11 @@ void toUpper(char* str, size_t len) {
       str[i] = std::toupper(str[i]);
    }
 }
+void toLower(char* str, size_t len) {
+   for (auto i = 0ul; i < len; i++) {
+      str[i] = std::tolower(str[i]);
+   }
+}
 } // namespace
 int64_t lingodb::runtime::StringRuntime::len(VarLen32 str) {
    return str.getLen();
@@ -237,6 +242,17 @@ lingodb::runtime::VarLen32 lingodb::runtime::StringRuntime::toUpper(lingodb::run
       char* copied = new char[str.getLen()];
       memcpy(copied, str.data(), str.getLen());
       ::toUpper(copied, str.getLen());
+      return lingodb::runtime::VarLen32((uint8_t*) copied, str.getLen());
+   }
+}
+lingodb::runtime::VarLen32 lingodb::runtime::StringRuntime::toLower(lingodb::runtime::VarLen32 str) {
+   if (str.isShort()) {
+      ::toLower(str.data(), str.getLen());
+      return str;
+   } else {
+      char* copied = new char[str.getLen()];
+      memcpy(copied, str.data(), str.getLen());
+      ::toLower(copied, str.getLen());
       return lingodb::runtime::VarLen32((uint8_t*) copied, str.getLen());
    }
 }
@@ -254,6 +270,12 @@ lingodb::runtime::VarLen32 lingodb::runtime::StringRuntime::concat(lingodb::runt
       return lingodb::runtime::VarLen32((uint8_t*) copied, totalLength);
    }
 }
+
+bool lingodb::runtime::StringRuntime::contains(VarLen32 str, VarLen32 substr) {
+        if (str.getLen() < substr.getLen()) return false;
+        return std::string_view(str.data(), str.getLen()).find(std::string_view(substr.data(), substr.getLen())) != std::string::npos;
+}
+
 int64_t lingodb::runtime::StringRuntime::toDate(lingodb::runtime::VarLen32 str) {
    int32_t res;
    arrow::internal::ParseValue<arrow::Date32Type>(str.data(), str.getLen(), &res);
@@ -281,3 +303,46 @@ lingodb::runtime::VarLen32 lingodb::runtime::StringRuntime::fromTimestamp(int64_
 extern "C" lingodb::runtime::VarLen32 createVarLen32(uint8_t* ptr, uint32_t len) { //NOLINT(clang-diagnostic-return-type-c-linkage)
    return lingodb::runtime::VarLen32(ptr, len);
 }
+
+
+inline int64_t find(const std::string& str, const std::string& sub, int64_t start, int64_t end) {
+   auto pos = str.find(sub, start);
+   if (pos == std::string::npos || pos + sub.size() > end) {
+      return -1;
+   } else {
+      return pos;
+   }
+}
+
+inline int64_t rfind(const std::string& str, const std::string& sub, int64_t start, int64_t end) {
+   end -= sub.size();
+   if (end < 0) end = 0;
+   auto pos = str.rfind(sub, end);
+   if (pos == std::string::npos || pos < start) {
+      return -1;
+   } else {
+      return pos;
+   }
+}
+
+int64_t lingodb::runtime::StringRuntime::pyFind(VarLen32 str, VarLen32 needle, int64_t start, int64_t end) {
+   return find(str.str(), needle.str(), start, end);
+}
+int64_t lingodb::runtime::StringRuntime::pyRFind(VarLen32 str, VarLen32 needle, int64_t start, int64_t end) {
+   return rfind(str.str(), needle.str(), start, end);
+}
+inline std::string replace(const std::string& str, const std::string& oldVal, const std::string& newVal) {
+   auto len = oldVal.size();
+   std::string output = str;
+   size_t pos = output.find(oldVal);
+   while (pos != std::string::npos) {
+      output.replace(pos, len, newVal);
+      pos = output.find(oldVal);
+   }
+   return output;
+}
+lingodb::runtime::VarLen32 lingodb::runtime::StringRuntime::replace(VarLen32 str, VarLen32 oldVal, VarLen32 newVal) {
+   auto res = ::replace(str.str(), oldVal.str(), newVal.str());
+   return lingodb::runtime::VarLen32::fromString(res);
+}
+
