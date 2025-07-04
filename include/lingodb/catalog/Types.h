@@ -53,7 +53,7 @@ class Type {
    public:
    Type(LogicalTypeId id, std::shared_ptr<TypeInfo> info);
    std::string toString() const;
-   LogicalTypeId getTypeId() { return id; }
+   LogicalTypeId getTypeId() const { return id; }
    template <class T>
    std::shared_ptr<T> getInfo() {
       return std::dynamic_pointer_cast<T>(info);

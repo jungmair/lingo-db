@@ -13,6 +13,19 @@ struct CreateTableDef {
    void serialize(utility::Serializer& serializer) const;
    static CreateTableDef deserialize(utility::Deserializer& deserializer);
 };
+
+struct CreateFunctionDef {
+   std::string name;
+   std::vector<Type> argumentTypes;
+   Type returnType;
+   std::string language;
+   std::string code;
+   CreateFunctionDef(std::string name, std::vector<Type> argumentTypes, Type returnType, std::string language, std::string code)
+      : name(std::move(name)), argumentTypes(std::move(argumentTypes)), returnType(std::move(returnType)), language(std::move(language)), code(std::move(code)) {}
+
+   void serialize(utility::Serializer& serializer) const;
+   static CreateFunctionDef deserialize(utility::Deserializer& deserializer);
+};
 } // namespace lingodb::catalog
 
 #endif //LINGODB_CATALOG_DEFS_H

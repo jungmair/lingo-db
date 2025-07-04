@@ -14,9 +14,35 @@
 
 #include <filesystem>
 #include <regex>
+#include <lingodb/catalog/Functions.h>
 #include <mlir/Parser/Parser.h>
 
 namespace {
+std::string joinFuncName(List* funcname) {
+   std::string result;
+   for (ListCell* lc = funcname->head; lc != nullptr; lc = lc->next) {
+      Value* val = (Value*) lfirst(lc);
+      if (!result.empty()) result += ".";
+      result += val->val_.str_;
+   }
+   return result;
+}
+
+// Helper to extract function source code from DefElem list
+std::string extractFunctionSource(List* options) {
+   for (ListCell* lc = options->head; lc != nullptr; lc = lc->next) {
+      DefElem* def = (DefElem*) lfirst(lc);
+      if (strcmp(def->defname_, "as") == 0) {
+         if (IsA(def->arg_, List)) {
+            List* strList = (List*) def->arg_;
+            if (strList->length > 0) {
+               return ((Value*) lfirst(strList->head))->val_.str_;
+            }
+         }
+      }
+   }
+   return "<no function body found>";
+}
 using namespace lingodb::compiler::dialect;
 namespace rt = lingodb::compiler::runtime;
 struct TranslationContext {
@@ -384,79 +410,15 @@ mlir::Value frontend::sql::Parser::translateFuncCallExpression(Node* node, mlir:
       auto packed = builder.create<util::PackOp>(loc, values);
       return builder.create<db::Hash>(loc, builder.getIndexType(), packed);
    }
-   auto inputFilename = "functions/" + funcName + ".mlir";
-   if (std::filesystem::exists(inputFilename)) {
-      mlir::OwningOpRef<mlir::ModuleOp> module;
-      llvm::SourceMgr sourceMgr;
-      mlir::SourceMgrDiagnosticHandler sourceMgrHandler(sourceMgr, builder.getContext());
-      llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> fileOrErr =
-         llvm::MemoryBuffer::getFileOrSTDIN(inputFilename);
-      if (std::error_code ec = fileOrErr.getError()) {
-         throw std::runtime_error("Could not open input file: " + ec.message() + "\n");
-      }
-
-      // Parse the input mlir.
-      sourceMgr.AddNewSourceBuffer(std::move(*fileOrErr), llvm::SMLoc());
-      module = mlir::parseSourceFile<mlir::ModuleOp>(sourceMgr, builder.getContext());
-      if (!module) {
-         throw std::runtime_error("Error can't load file " + inputFilename + "\n");
-      }
-      std::vector<mlir::Operation*> toMove;
-      for (auto& op : module->getOps()) {
-         toMove.push_back(&op);
-      }
-      for (auto* op : toMove) {
-         op->remove();
-         if (auto funcOp = mlir::dyn_cast<mlir::func::FuncOp>(op)) {
-            funcOp.setSymVisibility("private");
-         }
-         moduleOp.getBody()->push_back(op);
-      }
+   //lowercase function name for catalog lookup
+   std::transform(funcName.begin(), funcName.end(), funcName.begin(), ::tolower);
+   if (auto func = catalog.getTypedEntry<catalog::PyFunctionCatalogEntry>(funcName)) {
       std::vector<mlir::Value> values;
-      std::vector<mlir::Value> isNull;
       for (auto* cell = funcCall->args_->head; cell != nullptr; cell = cell->next) {
          mlir::Value translatedArg = translateExpression(builder, reinterpret_cast<Node*>(cell->data.ptr_value), context);
          values.push_back(translatedArg);
-         if (mlir::isa<db::NullableType>(translatedArg.getType())) {
-            isNull.push_back(builder.create<db::IsNullOp>(loc, translatedArg));
-         }
       }
-      if (isNull.size() > 0) {
-         auto allNotNull = builder.create<db::OrOp>(loc, isNull);
-         auto* elseBlock = new mlir::Block;
-         mlir::Type resType;
-         {
-            mlir::OpBuilder::InsertionGuard guard(builder);
-            builder.setInsertionPointToStart(elseBlock);
-            std::vector<mlir::Value> notNullValues;
-            for (auto v : values) {
-               notNullValues.push_back(mlir::isa<db::NullableType>(v.getType()) ? builder.create<db::NullableGetVal>(loc, mlir::cast<db::NullableType>(v.getType()).getType(), v) : v);
-            }
-            auto func = mlir::cast<mlir::func::FuncOp>(moduleOp.lookupSymbol(funcName));
-            auto res = builder.create<mlir::func::CallOp>(loc, func, notNullValues).getResult(0);
-            mlir::Value resNullable = builder.create<db::AsNullableOp>(loc, db::NullableType::get(res.getType()), res);
-
-            resType = resNullable.getType();
-            builder.create<mlir::scf::YieldOp>(loc, resNullable);
-         }
-         auto* thenBlock = new mlir::Block;
-
-         {
-            mlir::OpBuilder::InsertionGuard guard(builder);
-            builder.setInsertionPointToStart(thenBlock);
-            mlir::Value res = builder.create<db::NullOp>(loc, resType);
-            builder.create<mlir::scf::YieldOp>(loc, res);
-         }
-         auto ifOp = builder.create<mlir::scf::IfOp>(loc, mlir::TypeRange{resType}, allNotNull, false);
-         ifOp.getThenRegion().getBlocks().clear();
-         ifOp.getThenRegion().push_back(thenBlock);
-         ifOp.getElseRegion().getBlocks().clear();
-         ifOp.getElseRegion().push_back(elseBlock);
-         return ifOp.getResult(0);
-      }
-      auto func = mlir::cast<mlir::func::FuncOp>(moduleOp.lookupSymbol(funcName));
-
-      return builder.create<mlir::func::CallOp>(loc, func, values).getResult(0);
+      return func.value()->getImplementer()->callFunction(moduleOp, builder, loc, values);
    }
    throw std::runtime_error("could not translate func call");
    return mlir::Value();
@@ -1253,6 +1215,29 @@ void frontend::sql::Parser::translateCreateStatement(mlir::OpBuilder& builder, C
    auto descriptionValue = createStringValue(builder, utility::serializeToHexString(createTableDef));
    rt::RelationHelper::createTable(builder, builder.getUnknownLoc())(mlir::ValueRange({descriptionValue}));
 }
+
+void frontend::sql::Parser::translateCreateFunctionStatement(mlir::OpBuilder& builder, CreateFunctionStmt* statement) {
+   auto* stmt = reinterpret_cast<CreateFunctionStmt*>(statement);
+   std::string fname = joinFuncName(stmt->funcname_);
+   auto returnType = createType(stmt->return_type_);
+   std::vector<lingodb::catalog::Type> paramTypes;
+   std::string source = extractFunctionSource(stmt->options_);
+
+   for (ListCell* lc = stmt->parameters_->head; lc != nullptr; lc = lc->next) {
+      FunctionParameter* param = (FunctionParameter*) lfirst(lc);
+      //std::string paramname = param->name_ ? param->name_ : "<unnamed>";
+      paramTypes.push_back(createType(param->arg_type_));
+   }
+   lingodb::catalog::CreateFunctionDef createFunctionDef(
+      fname,
+      paramTypes,
+      returnType,
+      "python",
+      source);
+   auto descriptionValue = createStringValue(builder, utility::serializeToHexString(createFunctionDef));
+   rt::RelationHelper::createFunction(builder, builder.getUnknownLoc())(mlir::ValueRange({descriptionValue}));
+}
+
 mlir::Value frontend::sql::Parser::translateSubSelect(mlir::OpBuilder& builder, SelectStmt* stmt, std::string alias, std::vector<std::string> colAlias, TranslationContext& context, TranslationContext::ResolverScope& scope) {
    mlir::Value subQuery;
    TargetInfo targetInfo;
@@ -1412,6 +1397,10 @@ std::optional<mlir::Value> frontend::sql::Parser::translate(mlir::OpBuilder& bui
             translateInsertStmt(builder, reinterpret_cast<InsertStmt*>(statement));
             break;
          }
+         case T_CreateFunctionStmt: {
+            translateCreateFunctionStatement(builder, reinterpret_cast<CreateFunctionStmt*>(statement));
+            break;
+         }
          default:
             throw std::runtime_error("unsupported statement type");
       }
@@ -1563,6 +1552,13 @@ std::vector<std::variant<size_t, std::string>> frontend::sql::Parser::getTypeMod
       }
    }
    return typeModifiers;
+}
+
+lingodb::catalog::Type frontend::sql::Parser::createType(TypeName* typeName) {
+   std::vector<std::variant<size_t, std::string>> typeModifiers = getTypeModList(typeName->typmods_);
+   bool isNullable = true;
+   std::string datatypeName = reinterpret_cast<value*>(typeName->names_->tail->data.ptr_value)->val_.str_;
+   return createType(datatypeName, typeModifiers);
 }
 void frontend::sql::Parser::translateInsertStmt(mlir::OpBuilder& builder, InsertStmt* stmt) {
    assert(stmt->with_clause_ == nullptr);

@@ -2,6 +2,13 @@
 #define LINGODB_CATALOG_MLIRTYPES_H
 #include "mlir/IR/Types.h"
 
+#include <mlir/IR/Value.h>
+#include <mlir/IR/ValueRange.h>
+
+namespace mlir {
+class ModuleOp;
+class OpBuilder;
+}
 namespace lingodb::catalog {
 class IntTypeInfo;
 class DecimalTypeInfo;
@@ -25,6 +32,12 @@ std::shared_ptr<MLIRTypeCreator> createTimestampTypeCreator(std::shared_ptr<cata
 std::shared_ptr<MLIRTypeCreator> createIntervalTypeCreator(std::shared_ptr<catalog::IntervalTypeInfo> info);
 std::shared_ptr<MLIRTypeCreator> createCharTypeCreator(std::shared_ptr<catalog::CharTypeInfo> info);
 std::shared_ptr<MLIRTypeCreator> createStringTypeCreator(std::shared_ptr<catalog::StringTypeInfo> info);
+
+class MLIRFunctionImplementer {
+   public:
+   virtual mlir::Value callFunction(mlir::ModuleOp& moduleOp, mlir::OpBuilder& builder, mlir::Location loc, mlir::ValueRange args) = 0;
+   virtual ~MLIRFunctionImplementer() = default;
+};
 } // namespace lingodb::catalog
 
 #endif //LINGODB_CATALOG_MLIRTYPES_H

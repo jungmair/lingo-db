@@ -1,0 +1,3 @@
+[submodule "vendored/hipy"]
+	path = vendored/hipy
+	url = https://github.com/lingo-db/hipy.git

@@ -1,0 +1,22 @@
+statement ok
+CREATE OR REPLACE FUNCTION extract_type(text_input TEXT)
+RETURNS TEXT
+AS $$
+import hipy
+
+@hipy.compiled_function
+def extract_type(title):
+    t = title.lower()
+    type = 'unknown'
+    if 'condo' in t or 'apartment' in t:
+        type = 'condo'
+    if 'house' in t:
+        type = 'house'
+    return type
+$$ LANGUAGE plpython3u;
+
+query tsv rowsort
+select extract_type('Condo for sale in downtown'::text) as type1
+----
+condo
+

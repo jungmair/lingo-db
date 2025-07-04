@@ -13,6 +13,7 @@
 #include <arrow/csv/api.h>
 #include <arrow/io/api.h>
 #include <lingodb/catalog/Defs.h>
+#include <lingodb/catalog/Functions.h>
 
 #include <lingodb/runtime/storage/LingoDBTable.h>
 namespace lingodb::runtime {
@@ -28,6 +29,16 @@ void RelationHelper::createTable(lingodb::runtime::VarLen32 meta) {
       catalog->insertEntry(index);
       relation->addIndex(index->getName());
    }
+   catalog->persist();
+}
+
+void RelationHelper::createFunction(lingodb::runtime::VarLen32 meta) {
+   auto* context = getCurrentExecutionContext();
+   auto& session = context->getSession();
+   auto catalog = session.getCatalog();
+   auto def = utility::deserializeFromHexString<lingodb::catalog::CreateFunctionDef>(meta.str());
+   auto func = std::make_shared<lingodb::catalog::PyFunctionCatalogEntry>(def.name, def.argumentTypes, def.returnType, def.code);
+   catalog->insertEntry(func);
    catalog->persist();
 }
 void RelationHelper::appendToTable(runtime::Session& session, std::string tableName, std::shared_ptr<arrow::Table> table) {

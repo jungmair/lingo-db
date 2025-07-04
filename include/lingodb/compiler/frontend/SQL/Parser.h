@@ -244,6 +244,8 @@ struct Parser {
    //helper function: convert pg list to vector of int/string for type modifiers
    std::vector<std::variant<size_t, std::string>> getTypeModList(List* typeMods);
 
+   lingodb::catalog::Type createType(TypeName* typeName);
+
    //analyze expression from target list to e.g. first compute expressions required for computing aggregates
    Node* analyzeTargetExpression(Node* node, ReplaceState& replaceState);
 
@@ -273,6 +275,7 @@ struct Parser {
 
    //translate a CREATE statement
    void translateCreateStatement(mlir::OpBuilder& builder, CreateStmt* statement);
+   void translateCreateFunctionStatement(mlir::OpBuilder& builder, CreateFunctionStmt* statement);
 
    //translate the provided SQL statement
    std::optional<mlir::Value> translate(mlir::OpBuilder& builder);
