@@ -386,7 +386,7 @@ LogicalResult printOperation(CppEmitter& emitter, util::DeAllocOp op) {
    return mlir::success();
 }
 LogicalResult printOperation(CppEmitter& emitter, util::CreateConstVarLen op) {
-   return printStandardOperation(emitter, op, [&](auto& os) { os << "runtime::VarLen32{reinterpret_cast<const uint8_t*>(\"" << escapeQuotes(op.getStr().str()) << "\"), " << op.getStr().size() << "}"; });
+   return printStandardOperation(emitter, op, [&](auto& os) { os << "runtime::VarLen32{reinterpret_cast<const uint8_t*>(R\"RAW(" << (op.getStr().str()) << ")RAW\"), " << op.getStr().size() << "}"; });
 }
 LogicalResult printOperation(CppEmitter& emitter, util::PackOp op) {
    return printStandardOperation(emitter, op, [&](auto& os) {
