@@ -23,6 +23,11 @@ module {
         %c1i = arith.constant 1 : index
         %elem2 = db.list_get %list: !db.list<i32> [%c1i]  : i32
         db.runtime_call "DumpValue" (%elem2) : (i32) -> ()
+        //CHECK: int(42)
+        %c42 = arith.constant 42 : i32
+        db.list_set %list: !db.list<i32> [%c1i] = %c42 : i32
+        %elem2_updated = db.list_get %list: !db.list<i32> [%c1i]  : i32
+        db.runtime_call "DumpValue" (%elem2_updated) : (i32) -> ()
 
 
         return

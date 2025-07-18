@@ -396,8 +396,8 @@ lingodb::runtime::VarLen32 lingodb::runtime::StringRuntime::concat(lingodb::runt
 }
 
 bool lingodb::runtime::StringRuntime::contains(VarLen32 str, VarLen32 substr) {
-        if (str.getLen() < substr.getLen()) return false;
-        return std::string_view(str.data(), str.getLen()).find(std::string_view(substr.data(), substr.getLen())) != std::string::npos;
+   if (str.getLen() < substr.getLen()) return false;
+   return std::string_view(str.data(), str.getLen()).find(std::string_view(substr.data(), substr.getLen())) != std::string::npos;
 }
 
 int64_t lingodb::runtime::StringRuntime::toDate(lingodb::runtime::VarLen32 str) {
@@ -432,7 +432,6 @@ int32_t lingodb::runtime::StringRuntime::toChar(VarLen32 str) {
 extern "C" lingodb::runtime::VarLen32 createVarLen32(uint8_t* ptr, uint32_t len) { //NOLINT(clang-diagnostic-return-type-c-linkage)
    return lingodb::runtime::VarLen32(ptr, len);
 }
-
 
 inline int64_t find(const std::string& str, const std::string& sub, int64_t start, int64_t end) {
    auto pos = str.find(sub, start);
@@ -475,3 +474,47 @@ lingodb::runtime::VarLen32 lingodb::runtime::StringRuntime::replace(VarLen32 str
    return lingodb::runtime::VarLen32::fromString(res);
 }
 
+lingodb::runtime::List* lingodb::runtime::StringRuntime::split(VarLen32 str, VarLen32 needle, size_t maxSplits) {
+   if (needle.getLen() == 0) {
+      throw std::runtime_error("Cannot split by empty string");
+   }
+   auto* list = lingodb::runtime::List::create(sizeof(lingodb::runtime::VarLen32));
+   size_t start = 0;
+   size_t end = 0;
+   size_t splits = 0;
+   while (end < str.getLen()) {
+      end = find(str.str(), needle.str(), start, str.getLen());
+      if (end == static_cast<size_t>(-1)) {
+         end = str.getLen();
+      }
+      if (splits >= maxSplits) {
+         end = str.getLen();
+      }
+      auto* val = list->append();
+      new (val) lingodb::runtime::VarLen32(reinterpret_cast<const uint8_t*>(str.data() + start), end - start);
+      start = end + needle.getLen();
+      splits++;
+   }
+   return list;
+}
+
+int64_t lingodb::runtime::StringRuntime::ord(VarLen32 str) {
+   //convert utf8 char (1-4 bytes) to int32_t
+   if (str.getLen() == 0) {
+      throw std::runtime_error("Cannot get ord of empty string");
+   }
+   if (str.getLen() == 1) {
+      return static_cast<int32_t>(str.data()[0]);
+   }
+   if (str.getLen() == 2) {
+      return (static_cast<int32_t>(str.data()[0]) & 0x1F) << 6 | (static_cast<int32_t>(str.data()[1]) & 0x3F);
+   }
+   if (str.getLen() == 3) {
+      return (static_cast<int32_t>(str.data()[0]) & 0x0F) << 12 | (static_cast<int32_t>(str.data()[1]) & 0x3F) << 6 | (static_cast<int32_t>(str.data()[2]) & 0x3F);
+   }
+   if (str.getLen() == 4) {
+      return (static_cast<int32_t>(str.data()[0]) & 0x07) << 18 | (static_cast<int32_t>(str.data()[1]) & 0x3F) << 12 |
+         (static_cast<int32_t>(str.data()[2]) & 0x3F) << 6 | (static_cast<int32_t>(str.data()[3]) & 0x3F);
+   }
+   throw std::runtime_error("Cannot get ord of string with length " + std::to_string(str.getLen()));
+}

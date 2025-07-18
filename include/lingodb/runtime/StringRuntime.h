@@ -1,6 +1,7 @@
 #ifndef LINGODB_RUNTIME_STRINGRUNTIME_H
 #define LINGODB_RUNTIME_STRINGRUNTIME_H
 #include "lingodb/runtime/helpers.h"
+#include "lingodb/runtime/ListRuntime.h"
 namespace lingodb::runtime {
 struct StringRuntime {
    static bool compareEq(VarLen32 l, VarLen32 r);
@@ -40,6 +41,8 @@ struct StringRuntime {
    static VarLen32 concat(VarLen32 a, VarLen32 b);
    static size_t findMatch(VarLen32 str, VarLen32 needle, size_t start, size_t end);
    static size_t findNext(VarLen32 str, VarLen32 needle, size_t start);
+   static List* split(VarLen32 str, VarLen32 needle, size_t maxSplits);
+   static int64_t ord(VarLen32 str);
 };
 } // namespace lingodb::runtime
 #endif // LINGODB_RUNTIME_STRINGRUNTIME_H

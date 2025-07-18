@@ -74,6 +74,9 @@ class PythonUDFImplementer : public lingodb::catalog::MLIRFunctionImplementer {
                case lingodb::catalog::LogicalTypeId::STRING:
                   jsonArgs.push_back("str");
                   break;
+               case lingodb::catalog::LogicalTypeId::INT:
+                  jsonArgs.push_back("int");
+                  break;
                default:
                   throw std::runtime_error("Unsupported argument type for Python UDF: " + argType.toString());
             }
@@ -82,7 +85,7 @@ class PythonUDFImplementer : public lingodb::catalog::MLIRFunctionImplementer {
 
          // Step 2: Invoke the external script
          std::ostringstream command;
-         command << "~/projects/hipy/venv/bin/python3 vendored/hipy/compile.py " << tempFilePath << " " << funcName << " '" << jsonArgsStr << "' " << outputFilePath << " 2>&1";
+         command << ".venv/bin/python3 vendored/hipy/compile.py " << tempFilePath << " " << funcName << " '" << jsonArgsStr << "' " << outputFilePath << " 2>&1";
          std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.str().c_str(), "r"), pclose);
          if (!pipe) {
             throw std::runtime_error("Failed to execute compile.py script.");
