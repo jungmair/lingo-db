@@ -414,9 +414,11 @@ mlir::Value frontend::sql::Parser::translateFuncCallExpression(Node* node, mlir:
    std::transform(funcName.begin(), funcName.end(), funcName.begin(), ::tolower);
    if (auto func = catalog.getTypedEntry<catalog::PyFunctionCatalogEntry>(funcName)) {
       std::vector<mlir::Value> values;
-      for (auto* cell = funcCall->args_->head; cell != nullptr; cell = cell->next) {
-         mlir::Value translatedArg = translateExpression(builder, reinterpret_cast<Node*>(cell->data.ptr_value), context);
-         values.push_back(translatedArg);
+      if(funcCall->args_) {
+         for (auto* cell = funcCall->args_->head; cell != nullptr; cell = cell->next) {
+            mlir::Value translatedArg = translateExpression(builder, reinterpret_cast<Node*>(cell->data.ptr_value), context);
+            values.push_back(translatedArg);
+         }
       }
       return func.value()->getImplementer()->callFunction(moduleOp, builder, loc, values);
    }
@@ -1222,11 +1224,12 @@ void frontend::sql::Parser::translateCreateFunctionStatement(mlir::OpBuilder& bu
    auto returnType = createType(stmt->return_type_);
    std::vector<lingodb::catalog::Type> paramTypes;
    std::string source = extractFunctionSource(stmt->options_);
-
-   for (ListCell* lc = stmt->parameters_->head; lc != nullptr; lc = lc->next) {
-      FunctionParameter* param = (FunctionParameter*) lfirst(lc);
-      //std::string paramname = param->name_ ? param->name_ : "<unnamed>";
-      paramTypes.push_back(createType(param->arg_type_));
+   if(stmt->parameters_) {
+      for (ListCell* lc = stmt->parameters_->head; lc != nullptr; lc = lc->next) {
+         FunctionParameter* param = (FunctionParameter*) lfirst(lc);
+         //std::string paramname = param->name_ ? param->name_ : "<unnamed>";
+         paramTypes.push_back(createType(param->arg_type_));
+      }
    }
    lingodb::catalog::CreateFunctionDef createFunctionDef(
       fname,
