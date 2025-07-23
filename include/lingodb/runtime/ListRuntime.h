@@ -18,6 +18,8 @@ class List {
    uint8_t* append();
    size_t size();
    Buffer getBuffer();
+   void sort(bool (*isLess)(uint8_t*, uint8_t*));
+
 };
 
 }; // namespace lingodb::runtime

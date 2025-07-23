@@ -2,7 +2,7 @@
 using namespace lingodb::runtime;
 
 List* List::create(size_t sizeOfType) {
-   auto *list = new List(sizeOfType);
+   auto* list = new List(sizeOfType);
    getCurrentExecutionContext()->registerState({list, [](void* ptr) { delete reinterpret_cast<List*>(ptr); }});
    return list;
 }
@@ -35,3 +35,18 @@ uint8_t* List::at(size_t pos) {
 size_t List::size() {
    return len;
 }
+void List::sort(bool (*isLess)(uint8_t*, uint8_t*)) {
+   //vector is only used as byte storage, use type sizes
+   if (len < 2) return; // No need to sort if there are less than 2 elements
+   std::vector<uint8_t*> pointers(len);
+   for (size_t i = 0; i < len; i++) {
+      pointers[i] = values.data() + i * sizeOfType;
+   }
+   std::sort(pointers.begin(), pointers.end(), isLess);
+   std::vector<uint8_t> sortedValues(len * sizeOfType);
+   for (size_t i = 0; i < len; i++) {
+      memcpy(sortedValues.data() + i * sizeOfType, pointers[i], sizeOfType);
+   }
+   values = std::move(sortedValues);
+}
+
