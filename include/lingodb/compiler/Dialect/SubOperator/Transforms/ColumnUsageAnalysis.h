@@ -8,8 +8,8 @@
 namespace lingodb::compiler::dialect::subop {
 
 struct ColumnUsageAnalysis {
-   std::unordered_map<mlir::Operation*, std::unordered_set<dialect::tuples::Column*>> usedColumns;
-   std::unordered_map<dialect::tuples::Column*, std::unordered_set<mlir::Operation*>> operationsUsingColumn;
+   llvm::DenseMap<mlir::Operation*, std::unordered_set<dialect::tuples::Column*>> usedColumns;
+   llvm::DenseMap<dialect::tuples::Column*, std::unordered_set<mlir::Operation*>> operationsUsingColumn;
    ColumnUsageAnalysis(mlir::Operation* op);
    void analyze(mlir::Operation* op, mlir::Attribute attr);
    const std::unordered_set<dialect::tuples::Column*>& getUsedColumns(mlir::Operation* op) {
