@@ -1116,7 +1116,7 @@ class CreateDictLowering : public OpConversionPattern<db::CreateDictOp> {
       mlir::func::FuncOp eqFn;
       {
          mlir::OpBuilder::InsertionGuard guard(rewriter);
-         rewriter.setInsertionPointToStart(createDictOp->getParentOfType<ModuleOp>().getBody());
+         rewriter.setInsertionPointAfter(suppliedEqFn);
 
          eqFn = rewriter.create<mlir::func::FuncOp>(createDictOp.getLoc(), "ht_eq_fn" + std::to_string(fnNameCntr++), fnType);
          rewriter.setInsertionPointToStart(eqFn.addEntryBlock());
@@ -1127,19 +1127,11 @@ class CreateDictLowering : public OpConversionPattern<db::CreateDictOp> {
          mlir::Value left = rewriter.create<util::LoadOp>(createDictOp.getLoc(), leftPtr).getVal();
          mlir::Value right = rewriter.create<util::LoadOp>(createDictOp.getLoc(), rightPtr).getVal();
          //1.3 inline the operations from the supplied function (by cloning them
-         mlir::IRMapping mapping;
-         mapping.map(suppliedEqFn.getArgument(0), left);
-         mapping.map(suppliedEqFn.getArgument(1), right);
-         for (auto& op : suppliedEqFn.getBody().front()) {
-            if (auto returnOp = mlir::dyn_cast_or_null<mlir::func::ReturnOp>(&op)) {
-               rewriter.create<mlir::func::ReturnOp>(createDictOp.getLoc(), mapping.lookup(returnOp.getOperand(0)));
-            } else {
-               rewriter.clone(op, mapping);
-            }
-         }
+         mlir::Value suppliedEqFnResult = rewriter.create<mlir::func::CallOp>(createDictOp.getLoc(), suppliedEqFn, mlir::ValueRange{left, right}).getResult(0);
+         rewriter.create<mlir::func::ReturnOp>(createDictOp.getLoc(), suppliedEqFnResult);
       }
       auto tplType = mlir::TupleType::get(rewriter.getContext(), {loweredKeyType, loweredValueType});
-      auto entryType =mlir::TupleType::get(getContext(), {refType, mlir::IndexType::get(getContext()), tplType});
+      auto entryType = mlir::TupleType::get(getContext(), {refType, mlir::IndexType::get(getContext()), tplType});
       auto typeSize = rewriter.create<util::SizeOfOp>(createDictOp.getLoc(), rewriter.getIndexType(), entryType);
       auto initialCapacity = rewriter.create<arith::ConstantIndexOp>(createDictOp.getLoc(), 4);
       auto dict = rt::Hashtable::create(rewriter, createDictOp.getLoc())({typeSize, initialCapacity})[0];
@@ -1272,7 +1264,7 @@ class DictIterGetValueLowering : public OpConversionPattern<db::DictIterGetValue
    using OpConversionPattern<db::DictIterGetValue>::OpConversionPattern;
    LogicalResult matchAndRewrite(db::DictIterGetValue dictIterGetValueOp, OpAdaptor adaptor, ConversionPatternRewriter& rewriter) const override {
       auto loc = dictIterGetValueOp.getLoc();
-      auto keyType = typeConverter->convertType(dictIterGetValueOp.getType());
+      auto keyType = typeConverter->convertType(dictIterGetValueOp.getIter().getType().getKeyType());
       auto valueType = typeConverter->convertType(dictIterGetValueOp.getIter().getType().getValueType());
       mlir::Value ptr = rt::HashtableIterator::getCurrent(rewriter, loc)({adaptor.getIter()})[0];
       auto tplType = mlir::TupleType::get(rewriter.getContext(), {keyType, valueType});
