@@ -2,6 +2,7 @@
 #include "lingodb/compiler/frontend/SQL/Parser.h"
 
 #include "lingodb/compiler/Dialect/Arrow/IR/ArrowDialect.h"
+#include "lingodb/compiler/Dialect/PyInterp/PyInterpDialect.h"
 #include "lingodb/compiler/Dialect/DB/IR/DBDialect.h"
 #include "lingodb/compiler/Dialect/DB/Passes.h"
 #include "lingodb/compiler/Dialect/RelAlg/IR/RelAlgDialect.h"
@@ -41,6 +42,7 @@ void lingodb::execution::initializeContext(mlir::MLIRContext& context) {
    registry.insert<subop::SubOperatorDialect>();
    registry.insert<db::DBDialect>();
    registry.insert<lingodb::compiler::dialect::arrow::ArrowDialect>();
+   registry.insert<lingodb::compiler::dialect::py_interp::PyInterpDialect>();
    registry.insert<mlir::func::FuncDialect>();
    registry.insert<mlir::arith::ArithDialect>();
    registry.insert<mlir::cf::ControlFlowDialect>();
