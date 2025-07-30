@@ -36,6 +36,7 @@ add_library(runtime OBJECT
         LingoDBHashIndex.cpp
         Session.cpp
         storage/LingoDBTable.cpp
+        PythonRuntime.cpp
 )
 set(COMPILE_DEFS "")
 if (ENABLE_GPU_BACKEND)

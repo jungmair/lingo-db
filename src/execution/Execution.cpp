@@ -3,6 +3,7 @@
 #include "lingodb/catalog/IndexCatalogEntry.h"
 #include "lingodb/catalog/TableCatalogEntry.h"
 #include "lingodb/compiler/Conversion/ArrowToStd/ArrowToStd.h"
+#include "lingodb/compiler/Conversion/PyInterpLowering/PyInterpLoweringPass.h"
 #include "lingodb/compiler/Conversion/DBToStd/DBToStd.h"
 #include "lingodb/compiler/Conversion/RelAlgToSubOp/RelAlgToSubOpPass.h"
 #include "lingodb/compiler/Conversion/SubOpToControlFlow/SubOpToControlFlowPass.h"
@@ -173,6 +174,7 @@ class DefaultImperativeLowering : public LoweringStep {
       lowerArrowPm.enableVerifier(verify);
       addLingoDBInstrumentation(lowerArrowPm, getSerializationState());
       lowerArrowPm.addPass(arrow::createLowerToStdPass());
+      lowerArrowPm.addPass(lingodb::compiler::dialect::py_interp::createLowerToStdPass());
       lowerArrowPm.addPass(mlir::createCanonicalizerPass());
       lowerArrowPm.addPass(mlir::createLoopInvariantCodeMotionPass());
       lowerArrowPm.addPass(mlir::createCSEPass());

@@ -59,6 +59,7 @@ class ExecutionContext {
    std::unordered_map<uint32_t, int64_t> tupleCounts;
    ConcurrentMap<void*, State> states;
    std::vector<std::unordered_map<size_t, State>> allocators;
+   std::vector<void*> pythonThreadStates;
    std::vector<Arena> stringArenas;
    Session& session;
 
@@ -66,6 +67,7 @@ class ExecutionContext {
    ExecutionContext(Session& session) : session(session) {
       allocators.resize(lingodb::scheduler::getNumWorkers());
       stringArenas.resize(lingodb::scheduler::getNumWorkers());
+      pythonThreadStates.resize(lingodb::scheduler::getNumWorkers(), nullptr);
    }
    Session& getSession() {
       return session;
@@ -102,6 +104,9 @@ class ExecutionContext {
    State& getAllocator(size_t group) {
       return allocators[lingodb::scheduler::currentWorkerId()][group];
    }
+   void setupPython();
+   void teardownPython();
+
    ~ExecutionContext();
 };
 

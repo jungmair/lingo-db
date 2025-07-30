@@ -20,7 +20,8 @@ set_target_properties(sql-to-mlir PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_B
 add_executable(run-mlir run-mlir.cpp)
 target_link_libraries(run-mlir PUBLIC runner runtime utility mlir-support scheduler)
 set_target_properties(run-mlir PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-
+target_link_libraries(run-mlir PRIVATE libpython3.14.so)
+target_link_directories(run-mlir PRIVATE /home/michael/Downloads/Python-3.14.0b3/installed/lib)
 
 # run-sql
 add_executable(run-sql run-sql.cpp)

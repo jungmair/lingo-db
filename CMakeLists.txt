@@ -88,7 +88,9 @@ elseif (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
 else ()
     message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif ()
-
+set(PY_INCLUDE_DIR
+        "/home/michael/Downloads/Python-3.14.0b3/installed/include/python3.14t"
+        CACHE PATH "Location of the Python include directory" FORCE)
 add_custom_target(build_includes)
 set(runtime_funcs_ptr_libs "")
 add_subdirectory(include)
@@ -119,8 +121,10 @@ gen_rt_def(st-rt-defs "SimpleState.h")
 gen_rt_def(paht-rt-defs "PreAggregationHashtable.h")
 gen_rt_def(lock-rt-defs "EntryLock.h")
 gen_rt_def(tracing-rt-defs "Tracing.h")
+gen_rt_def(py-rt-defs "PythonRuntime.h")
 message("cpp files ${runtime_funcs_ptr_libs}")
 string(REPLACE " " ";" runtime_funcs_ptr_libs "${runtime_funcs_ptr_libs}")
+include_directories(${PY_INCLUDE_DIR})
 
 add_library(runtime_funcs_ptr ${runtime_funcs_ptr_libs})
 add_dependencies(runtime_funcs_ptr build_includes)
@@ -141,6 +145,7 @@ add_subdirectory(src/compiler/Conversion/DBToStd)
 add_subdirectory(src/compiler/Conversion/ArrowToStd)
 add_subdirectory(src/compiler/Conversion/RelAlgToSubOp)
 add_subdirectory(src/compiler/Conversion/SubOpToControlFlow)
+add_subdirectory(src/compiler/Conversion/PyInterpLowering)
 
 add_subdirectory(src/compiler/Conversion/UtilToLLVM)
 
