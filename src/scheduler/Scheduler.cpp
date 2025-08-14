@@ -17,6 +17,7 @@ static thread_local Worker* currentWorker;
 } // end namespace
 
 struct TaskWrapper;
+#define ASAN_ACTIVE
 #ifdef ASAN_ACTIVE
 
 class Fiber {
@@ -204,6 +205,7 @@ struct TaskWrapper {
    //this is only to be called after the task is done, returned to the scheduler from all workers, and is not anymore used in the scheduler either
    std::function<void()> onFinalize = nullptr;
    std::mutex finalizeMutex = {};
+   std::atomic<int64_t> finalizedCalled= 0;
 
    void finalize();
 
@@ -351,6 +353,13 @@ class Scheduler {
          if (task->nonCompletedFibers) {
             throw std::runtime_error("Task returned from workers, but still has non-completed fibers");
          }
+         auto finalizedCalled = task->finalizedCalled.fetch_add(1);
+         if (finalizedCalled > 0) {
+            //already finalized, no need to finalize again
+            throw std::runtime_error("onFinalize called more than once for the same task");
+         }
+         assert(finalizedCalled==0);
+         task->finalized = true;
          task->onFinalize();
       }
    }
