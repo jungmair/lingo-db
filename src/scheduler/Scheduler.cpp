@@ -348,6 +348,9 @@ class Scheduler {
       auto taskDeployed = task->deployedOnWorkers.load();
       auto returnedNum = task->returnedFromWorkers.fetch_add(1) + 1;
       if (taskDeployed == returnedNum) {
+         if (task->nonCompletedFibers) {
+            throw std::runtime_error("Task returned from workers, but still has non-completed fibers");
+         }
          task->onFinalize();
       }
    }
