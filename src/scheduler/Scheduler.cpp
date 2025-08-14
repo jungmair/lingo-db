@@ -419,6 +419,7 @@ class Worker {
    std::condition_variable cv;
    size_t workerId;
    bool allowedToSleep = true;
+   bool shouldSleep = true;
 
    Worker(Scheduler& scheduler, size_t id) : scheduler(scheduler), fiberAllocator(64), workerId(id) {
    }
@@ -427,6 +428,7 @@ class Worker {
       {
          std::unique_lock<std::mutex> lock(mutex);
          allowedToSleep = false;
+         shouldSleep = false;
          cv.notify_one();
       }
    }
@@ -580,7 +582,7 @@ void Scheduler::start() {
 void Scheduler::stop() {
    shutdown.store(true);
    size_t cntr = 0;
-   size_t numTries =0;
+   size_t numTries = 0;
    while (stoppedWorkers.load() < numWorkers) {
       usleep(100);
       {
@@ -588,14 +590,16 @@ void Scheduler::stop() {
          while (idleWorkers) {
             assert(cntr++ < numWorkers);
             auto* currWorker = idleWorkers;
+
+            std::unique_lock<std::mutex> workerLock(currWorker->mutex);
             currWorker->isInIdleList = false;
             idleWorkers = currWorker->nextIdleWorker;
-            std::unique_lock<std::mutex> workerLock(currWorker->mutex);
+            currWorker->shouldSleep = false;
             currWorker->cv.notify_one();
          }
       }
       numTries++;
-      if (numTries% 100 == 0) {
+      if (numTries % 100 == 0) {
          std::cerr << "Waiting for workers to stop: " << stoppedWorkers.load() << "/" << numWorkers << std::endl;
       }
    }
@@ -621,7 +625,7 @@ void Scheduler::enqueueTask(TaskWrapper* wrapper) {
       std::unique_lock<std::mutex> workerLock(currWorker->mutex);
       currWorker->isInIdleList = false;
       idleWorkers = idleWorkers->nextIdleWorker;
-
+      currWorker->shouldSleep = false;
       currWorker->cv.notify_one();
    }
 }
@@ -639,7 +643,8 @@ void Scheduler::putWorkerToSleep(Worker* worker) {
          worker->isInIdleList = true;
       }
       lock.unlock();
-      worker->cv.wait(workerLock);
+      worker->shouldSleep = true;
+      worker->cv.wait(workerLock, [&]() { return !worker->shouldSleep; });
    } else {
       worker->allowedToSleep = true;
    }
