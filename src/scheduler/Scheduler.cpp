@@ -200,6 +200,8 @@ struct TaskWrapper {
    std::atomic<int64_t> yieldedFibers = 0;
    std::atomic<int64_t> nonCompletedFibers = 0;
    std::atomic<int64_t> deployedOnWorkers = 0;
+   std::atomic<int64_t> returnedFromWorkers = 0;
+   //this is only to be called after the task is done, returned to the scheduler from all workers, and is not anymore used in the scheduler either
    std::function<void()> onFinalize = nullptr;
    std::mutex finalizeMutex = {};
 
@@ -210,18 +212,15 @@ struct TaskWrapper {
    }
 
    bool startFiber() {
-      if (task->hasWork()) {
+      if (task->allocateWork()) {
          nonCompletedFibers++;
          return true;
       }
       return false;
    }
 
-   bool finishFiber() {
-      if (nonCompletedFibers.fetch_sub(1) == 1 && !task->hasWork()) {
-         return true;
-      }
-      return false;
+   void finishFiber() {
+      nonCompletedFibers--;
    }
 
    void yieldFiber() {
@@ -252,10 +251,6 @@ class Scheduler {
    TaskWrapper* taskHead = nullptr;
    TaskWrapper* taskTail = nullptr;
 
-   //queue for tasks that are cooling down i.e. they don't have work left to do, but are also not yet finished.
-   std::mutex coolingDownMutex;
-   TaskWrapper* coolingDownHead = nullptr;
-   TaskWrapper* coolingDownTail = nullptr;
    std::atomic<size_t> stoppedWorkers = 0;
 
    public:
@@ -318,15 +313,6 @@ class Scheduler {
             auto* toCoolDown = potentialTask;
             potentialTask = potentialTask->next;
             dequeueTaskLocked(toCoolDown);
-            std::lock_guard<std::mutex> lock1(coolingDownMutex);
-            if (coolingDownTail) {
-               coolingDownTail->next = toCoolDown;
-               toCoolDown->prev = coolingDownTail;
-               coolingDownTail = toCoolDown;
-            } else {
-               coolingDownHead = toCoolDown;
-               coolingDownTail = toCoolDown;
-            }
             toCoolDown->coolingDown = true;
             continue;
          }
@@ -351,58 +337,19 @@ class Scheduler {
    void returnTask(TaskWrapper* task) {
       // Multiple worker may call here concurrently. Avoid one worker already called `delete task`
       // but another worker is still at `task->finalized`
-      std::lock_guard<std::mutex> lock(taskReturnMutex);
-      auto deployedNum = task->deployedOnWorkers.fetch_sub(1);
-      if (task->finalized) {
-         if (deployedNum == 1) {
-            delete task;
+      {
+         std::lock_guard<std::mutex> lock(taskQueueMutex);
+         if (!task->coolingDown) {
+            task->coolingDown = true;
+            dequeueTaskLocked(task);
          }
       }
-   }
-
-   void finalizeTask(TaskWrapper* task) {
-      if (task->coolingDown) {
-         //simple case: already in cooling down queue
-         // -> only need to lock cooling down queue
-         std::lock_guard<std::mutex> lock(coolingDownMutex);
-         if (task->prev) {
-            task->prev->next = task->next;
-         } else {
-            coolingDownHead = task->next;
-         }
-         if (task->next) {
-            task->next->prev = task->prev;
-         } else {
-            coolingDownTail = task->prev;
-         }
-      } else {
-         //not in cooling down queue
-         // -> need to lock both task queue and cooling down queue
-         bool alreadyCoolingDown;
-         {
-            std::lock_guard<std::mutex> lock(taskQueueMutex);
-            alreadyCoolingDown = task->coolingDown;
-            if (!alreadyCoolingDown) {
-               dequeueTaskLocked(task);
-            }
-         }
-         // - If alreadyCoolingDown is true, last attempt to dequeue task is failed. task is appedn to coolingDown queue. need to remove it.
-         // - If alreadyCoolingDown is false, last attempt to dequeue task is ok. task is not inserted to coolingDown queue. no need to remove it.
-         if (alreadyCoolingDown) {
-            std::lock_guard<std::mutex> lock(coolingDownMutex);
-            if (task->prev) {
-               task->prev->next = task->next;
-            } else {
-               coolingDownHead = task->next;
-            }
-            if (task->next) {
-               task->next->prev = task->prev;
-            } else {
-               coolingDownTail = task->prev;
-            }
-         }
+      // Since the task is cooling down (protected with taskQueueMutex), deployedOnWorkers can not be changed anymore
+      auto taskDeployed = task->deployedOnWorkers.load();
+      auto returnedNum = task->returnedFromWorkers.fetch_add(1) + 1;
+      if (taskDeployed == returnedNum) {
+         task->onFinalize();
       }
-      task->finalize();
    }
 };
 
@@ -501,6 +448,7 @@ class Worker {
                runnableFibers.push_back(std::move(waitingOnTasks[taskWrapper]));
                waitingOnTasks.erase(taskWrapper);
                numWaitingFibers--;
+               delete taskWrapper;
             }
             wakeupWorker();
          };
@@ -521,11 +469,7 @@ class Worker {
          }
          auto handleFiberComplete = [&]() {
             auto* task = currentFiber->getTask();
-            if (task) {
-               if (task->finishFiber()) {
-                  scheduler.finalizeTask(task);
-               }
-            }
+            task->finishFiber();
             fiberAllocator.deallocate(std::move(currentFiber));
          };
          if (currentFiber) {
@@ -535,7 +479,7 @@ class Worker {
                   currentFiber->getTask()->unYieldFiber();
                }
                auto* resumeTask = currentFiber->getTask();
-               handleFiberComplete();
+               handleFiberComplete(); //todo: is this correct?, or can we yield multiple times?
                scheduler.returnTask(resumeTask);
             }
             assert(!currentFiber);
@@ -559,29 +503,8 @@ class Worker {
             }
 
             if (currTask) {
-               // Step 1. try startFiber. it's possible task is already exhausted. Task should be
-               // return if exhausted.
+               // Step 1. try startFiber, this will try to allocate work for the task
                if (!currTask->startFiber()) {
-                  scheduler.returnTask(currTask);
-                  continue;
-               }
-               // Step 2. try reserve a piece of work.
-               if (!currTask->task->allocateWork()) {
-                  // reserveWork false and finishFiber true means no possible for new run and all
-                  // runs are done. Then it is safe to finalize a task.
-                  // ## An extra reserveWork call is necessary:
-                  // Imagine a task of 2 unit and 1 thread. [reserveWork, consumeWork,
-                  //                                         reserveWork, consumeWork] called sequentially
-                  // After the second consumeWork, finishFiber in `handleFiberComplete` still return
-                  // true Althought it has no more work. A third reserveWork will set work to exhausted.
-                  // ## `finalizeTask` is called only once:
-                  // - scenario 1: 1 worker inside this if, other workers are before startFiber. Because
-                  //     work is already exhausted, all other workers will have startFiber return false.
-                  // - scenario 2: there are few workers inside this if or after startFiber(nonCompletedFibers>0)
-                  //     Only last worker end up with finishFiber return true.
-                  if (currTask->finishFiber()) {
-                     scheduler.finalizeTask(currTask);
-                  }
                   scheduler.returnTask(currTask);
                   continue;
                }
@@ -717,19 +640,8 @@ void Scheduler::putWorkerToSleep(Worker* worker) {
    }
 }
 
-void TaskWrapper::finalize() {
-   std::unique_lock<std::mutex> lock(finalizeMutex);
-   if (!finalized) { //this check is important! In case finalize is called multiple times which can happen in edge cases
-      if (onFinalize) {
-         onFinalize();
-      }
-      finalized = true;
-   }
-}
-
 void awaitEntryTask(std::unique_ptr<Task> task) {
    TaskWrapper* taskWrapper = new TaskWrapper{std::move(task)};
-   taskWrapper->deployedOnWorkers = 1; // make sure that this task is not auto-deleted by scheduler
    std::condition_variable cvFinished;
    bool finished = false;
    taskWrapper->onFinalize = [&]() {
@@ -739,9 +651,6 @@ void awaitEntryTask(std::unique_ptr<Task> task) {
    std::unique_lock<std::mutex> lk(taskWrapper->finalizeMutex);
    scheduler->enqueueTask(taskWrapper);
    cvFinished.wait(lk, [&]() { return finished; });
-   while (taskWrapper->deployedOnWorkers.load() > 1) {
-      // wait for all workers to return the task
-   }
    // taskWrapper is not used anymore, so we can delete it
    lk.release();
    delete taskWrapper;
