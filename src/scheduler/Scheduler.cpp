@@ -580,6 +580,7 @@ void Scheduler::start() {
 void Scheduler::stop() {
    shutdown.store(true);
    size_t cntr = 0;
+   size_t numTries =0;
    while (stoppedWorkers.load() < numWorkers) {
       usleep(100);
       {
@@ -592,6 +593,10 @@ void Scheduler::stop() {
             std::unique_lock<std::mutex> workerLock(currWorker->mutex);
             currWorker->cv.notify_one();
          }
+      }
+      numTries++;
+      if (numTries% 100 == 0) {
+         std::cerr << "Waiting for workers to stop: " << stoppedWorkers.load() << "/" << numWorkers << std::endl;
       }
    }
 }
