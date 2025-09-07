@@ -462,13 +462,14 @@ class Worker {
                runnableFibers.push_back(std::move(waitingOnTasks[taskWrapper]));
                waitingOnTasks.erase(taskWrapper);
                numWaitingFibers--;
-               delete taskWrapper;
+               //delete taskWrapper;
             }
             wakeupWorker();
          };
          scheduler.enqueueTask(taskWrapper);
       }
       toYield->yield();
+      assert(taskWrapper->finalized);
    }
 
    void work() {
