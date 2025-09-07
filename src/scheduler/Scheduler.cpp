@@ -206,7 +206,7 @@ struct TaskWrapper {
    //this is only to be called after the task is done, returned to the scheduler from all workers, and is not anymore used in the scheduler either
    std::function<void()> onFinalize = nullptr;
    std::mutex finalizeMutex = {};
-   std::atomic<int64_t> finalizedCalled= 0;
+   std::atomic<int64_t> finalizedCalled = 0;
 
    void finalize();
 
@@ -361,7 +361,7 @@ class Scheduler {
             //already finalized, no need to finalize again
             throw std::runtime_error("onFinalize called more than once for the same task");
          }
-         assert(finalizedCalled==0);
+         assert(finalizedCalled == 0);
          task->finalized = true;
          task->onFinalize();
       }
