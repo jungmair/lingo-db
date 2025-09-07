@@ -618,18 +618,16 @@ void Scheduler::stop() {
 }
 
 void Scheduler::enqueueTask(TaskWrapper* wrapper) {
-   {
-      std::lock_guard<std::mutex> lock(taskQueueMutex);
-      if (taskTail) {
-         taskTail->next = wrapper;
-         wrapper->prev = taskTail;
-         taskTail = wrapper;
-      } else {
-         taskHead = wrapper;
-         taskTail = wrapper;
-      }
-   }
    std::lock_guard<std::mutex> lock(taskQueueMutex);
+   if (taskTail) {
+      taskTail->next = wrapper;
+      wrapper->prev = taskTail;
+      taskTail = wrapper;
+   } else {
+      taskHead = wrapper;
+      taskTail = wrapper;
+   }
+
    size_t cntr = 0;
    while (idleWorkers) {
       assert(cntr++ < numWorkers);
