@@ -5,6 +5,7 @@
 #include <csignal>
 #include <deque>
 #include <iostream>
+#include <memory>
 #include <thread>
 
 #include "lingodb/scheduler/Scheduler.h"
@@ -25,7 +26,7 @@ class Fiber {
    std::atomic<bool> isRunning = false;
    bool done = true;
    Worker* worker = nullptr;
-   TaskWrapper* task = nullptr;
+   std::shared_ptr<TaskWrapper> task = nullptr;
    std::condition_variable cvMain, cvFiber;
    std::mutex mtx;
 
@@ -40,7 +41,7 @@ class Fiber {
          thread.join();
       }
    }
-   bool run(Worker* w, TaskWrapper* tw, const std::function<void()>&& f) {
+   bool run(Worker* w, std::shared_ptr<TaskWrapper> tw, const std::function<void()>&& f) {
       worker = w;
       task = tw;
       done = false;
@@ -94,7 +95,7 @@ class Fiber {
       return worker;
    }
 
-   TaskWrapper* getTask() {
+   std::shared_ptr<TaskWrapper> getTask() {
       return task;
    }
 };
@@ -130,13 +131,13 @@ class Fiber {
    boost::context::fiber fiber;
    boost::context::fiber sink;
    Worker* worker = nullptr;
-   TaskWrapper* task = nullptr;
+   std::shared_ptr<TaskWrapper> task = nullptr;
 
    public:
    void setup();
    void teardown();
 
-   bool run(Worker* worker, TaskWrapper* taskWrapper, const std::function<void()>&& f) {
+   bool run(Worker* worker, std::shared_ptr<TaskWrapper> taskWrapper, const std::function<void()>&& f) {
       this->worker = worker;
       this->task = taskWrapper;
       done = false;
@@ -158,7 +159,7 @@ class Fiber {
       return worker;
    }
 
-   TaskWrapper* getTask() {
+   std::shared_ptr<TaskWrapper> getTask() {
       return task;
    }
 
@@ -196,8 +197,8 @@ struct TaskWrapper {
 
    std::atomic<bool> coolingDown = false;
    bool finalized = false;
-   TaskWrapper* next = nullptr;
-   TaskWrapper* prev = nullptr;
+   std::shared_ptr<TaskWrapper> next = nullptr;
+   std::shared_ptr<TaskWrapper> prev = nullptr;
    std::atomic<int64_t> yieldedFibers = 0;
    std::atomic<int64_t> nonCompletedFibers = 0;
    std::atomic<int64_t> deployedOnWorkers = 0;
@@ -250,8 +251,8 @@ class Scheduler {
    Worker* idleWorkers = nullptr;
    std::mutex taskQueueMutex;
    std::mutex taskReturnMutex;
-   TaskWrapper* taskHead = nullptr;
-   TaskWrapper* taskTail = nullptr;
+   std::shared_ptr<TaskWrapper> taskHead = nullptr;
+   std::shared_ptr<TaskWrapper> taskTail = nullptr;
 
    std::atomic<size_t> stoppedWorkers = 0;
 
@@ -282,14 +283,16 @@ class Scheduler {
    }
 
    //insert task into "active task queue"
-   void enqueueTask(TaskWrapper* wrapper);
+   void enqueueTask(std::shared_ptr<TaskWrapper> wrapper);
 
    void enqueueTask(std::unique_ptr<Task>&& task) {
-      enqueueTask(new TaskWrapper{std::move(task)});
+      auto wrapper = std::make_shared<TaskWrapper>();
+      wrapper->task = std::move(task);
+      enqueueTask(wrapper);
    }
 
    //remove task from "active task queue"
-   void dequeueTaskLocked(TaskWrapper* task) {
+   void dequeueTaskLocked(std::shared_ptr<TaskWrapper> task) {
       if (task->prev) {
          task->prev->next = task->next;
       } else {
@@ -304,15 +307,15 @@ class Scheduler {
       task->next = nullptr;
    }
 
-   TaskWrapper* getTask() {
+   std::shared_ptr<TaskWrapper> getTask() {
       std::lock_guard<std::mutex> lock(taskQueueMutex);
-      auto* potentialTask = taskHead;
+      auto potentialTask = taskHead;
       size_t minYieldCount = std::numeric_limits<size_t>::max();
-      TaskWrapper* minYieldTask = nullptr;
+      std::shared_ptr<TaskWrapper> minYieldTask = nullptr;
       while (potentialTask) {
          //if we see a task that has no work left, we move it to the cooling down queue
          if (!potentialTask->task->hasWork()) {
-            auto* toCoolDown = potentialTask;
+            auto toCoolDown = potentialTask;
             potentialTask = potentialTask->next;
             dequeueTaskLocked(toCoolDown);
             toCoolDown->coolingDown = true;
@@ -336,7 +339,7 @@ class Scheduler {
       return minYieldTask;
    }
 
-   void returnTask(TaskWrapper* task) {
+   void returnTask(std::shared_ptr<TaskWrapper> task) {
       // Multiple worker may call here concurrently. Avoid one worker already called `delete task`
       // but another worker is still at `task->finalized`
       {
@@ -414,10 +417,10 @@ class Worker {
 
    std::unique_ptr<Fiber> currentFiber;
 
-   std::unordered_map<TaskWrapper*, std::unique_ptr<Fiber>> waitingOnTasks;
+   std::unordered_map<std::shared_ptr<TaskWrapper>, std::unique_ptr<Fiber>> waitingOnTasks;
    std::atomic<size_t> numWaitingFibers = 0;
 
-   TaskWrapper* currentTask = nullptr;
+   std::shared_ptr<TaskWrapper> currentTask = nullptr;
 
    using TimePoint = std::chrono::time_point<std::chrono::system_clock>;
    TimePoint startWaitTime = TimePoint::min();
@@ -446,7 +449,8 @@ class Worker {
    }
 
    void awaitChildTask(std::unique_ptr<Task> task) {
-      TaskWrapper* taskWrapper = new TaskWrapper{std::move(task)};
+      auto taskWrapper = std::make_shared<TaskWrapper>();
+      taskWrapper->task = std::move(task);
       Fiber* toYield;
       {
          std::unique_lock<std::mutex> fiberLock(fiberMutex);
@@ -462,7 +466,7 @@ class Worker {
                runnableFibers.push_back(std::move(waitingOnTasks[taskWrapper]));
                waitingOnTasks.erase(taskWrapper);
                numWaitingFibers--;
-               //delete taskWrapper;
+               // taskWrapper will be automatically destroyed by shared_ptr
             }
             wakeupWorker();
          };
@@ -483,7 +487,7 @@ class Worker {
             }
          }
          auto handleFiberComplete = [&]() {
-            auto* task = currentFiber->getTask();
+            auto task = currentFiber->getTask();
             task->finishFiber();
             fiberAllocator.deallocate(std::move(currentFiber));
          };
@@ -493,14 +497,14 @@ class Worker {
                if (currentFiber->getTask()) {
                   currentFiber->getTask()->unYieldFiber();
                }
-               auto* resumeTask = currentFiber->getTask();
+               auto resumeTask = currentFiber->getTask();
                handleFiberComplete(); //todo: is this correct?, or can we yield multiple times?
                scheduler.returnTask(resumeTask);
             }
             assert(!currentFiber);
          }
          if (fiberAllocator.canAllocate()) {
-            TaskWrapper* currTask = nullptr;
+            std::shared_ptr<TaskWrapper> currTask = nullptr;
             {
                std::unique_lock<std::mutex> lock(mutex);
                if (this->currentTask) {
@@ -618,7 +622,7 @@ void Scheduler::stop() {
    }
 }
 
-void Scheduler::enqueueTask(TaskWrapper* wrapper) {
+void Scheduler::enqueueTask(std::shared_ptr<TaskWrapper> wrapper) {
    std::lock_guard<std::mutex> lock(taskQueueMutex);
    if (taskTail) {
       taskTail->next = wrapper;
@@ -662,7 +666,8 @@ void Scheduler::putWorkerToSleep(Worker* worker) {
 }
 
 void awaitEntryTask(std::unique_ptr<Task> task) {
-   TaskWrapper* taskWrapper = new TaskWrapper{std::move(task)};
+   auto taskWrapper = std::make_shared<TaskWrapper>();
+   taskWrapper->task = std::move(task);
    std::condition_variable cvFinished;
    bool finished = false;
    taskWrapper->onFinalize = [&]() {
@@ -672,9 +677,8 @@ void awaitEntryTask(std::unique_ptr<Task> task) {
    std::unique_lock<std::mutex> lk(taskWrapper->finalizeMutex);
    scheduler->enqueueTask(taskWrapper);
    cvFinished.wait(lk, [&]() { return finished; });
-   // taskWrapper is not used anymore, so we can delete it
+   // taskWrapper will be automatically destroyed when it goes out of scope
    lk.release();
-   delete taskWrapper;
 }
 void awaitChildTask(std::unique_ptr<Task> task) {
    currentWorker->awaitChildTask(std::move(task));
