@@ -18,7 +18,6 @@ static thread_local Worker* currentWorker;
 } // end namespace
 
 struct TaskWrapper;
-#define ASAN_ACTIVE
 #ifdef ASAN_ACTIVE
 
 class Fiber {
