@@ -55,9 +55,9 @@ class Fiber {
    bool run(Worker* w, std::shared_ptr<TaskWrapper> tw, const std::function<void()>&& f) {
       worker = w;
       task = tw;
+      std::unique_lock<std::mutex> lk(mtx);
       done = false;
       isRunning = true;
-      std::unique_lock<std::mutex> lk(mtx);
       if (thread.joinable()) {
          thread.join();
       }
@@ -80,8 +80,8 @@ class Fiber {
    bool resume() {
       assert(!isRunning);
       assert(!done);
-      isRunning = true;
       std::unique_lock<std::mutex> lk(mtx);
+      isRunning = true;
       cvFiber.notify_one();
       cvMain.wait(lk, [&]() { return !isRunning; });
       return done;
