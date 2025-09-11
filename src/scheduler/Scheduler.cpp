@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <thread>
+#include <syncstream>
 
 #include "lingodb/scheduler/Scheduler.h"
 #include "lingodb/scheduler/Task.h"
@@ -381,7 +382,7 @@ class Scheduler {
             task->finalized = true;
             task->onFinalize();
          } else {
-            //std::osyncstream(std::cout)<<"Worker "<<currentWorkerId()<<" returns task"<< task.get()<<", but not all workers returned yet. Deployed: "<<taskDeployed<<", Returned: "<<returnedNum<<" for task" << task->task->name()<< " non completed fibers: " << std::boolalpha<< task->nonCompletedFibers<< std::endl;
+            std::osyncstream(std::cout)<<"Worker "<<currentWorkerId()<<" returns task"<< task.get()<<", but not all workers returned yet. Deployed: "<<taskDeployed<<", Returned: "<<returnedNum<<" for task" << task->task->name()<< " non completed fibers: " << std::boolalpha<< task->nonCompletedFibers<< std::endl;
          }
       }
    }
@@ -649,6 +650,7 @@ void Scheduler::stop() {
 }
 
 void Scheduler::enqueueTask(std::shared_ptr<TaskWrapper> wrapper) {
+   std::osyncstream(std::cout)<<"enqueue task "<< std::endl;
    std::lock_guard<std::mutex> lock(taskQueueMutex);
    if (taskTail) {
       taskTail->next = wrapper;
@@ -685,9 +687,9 @@ void Scheduler::putWorkerToSleep(Worker* worker) {
       }
       lock.unlock();
       worker->shouldSleep = true;
-      //std::osyncstream(std::cout)<<"worker"<< worker->workerId<<" going to sleep"<<std::endl;
+      std::osyncstream(std::cout)<<"worker"<< worker->workerId<<" going to sleep"<<std::endl;
       worker->cv.wait(workerLock, [&]() { return !worker->shouldSleep; });
-      //std::osyncstream(std::cout)<<"worker"<< worker->workerId<<" woke up"<<std::endl;
+      std::osyncstream(std::cout)<<"worker"<< worker->workerId<<" woke up"<<std::endl;
    } else {
       worker->allowedToSleep = true;
    }
@@ -710,7 +712,6 @@ void awaitEntryTask(std::unique_ptr<Task> task) {
 }
 void awaitChildTask(std::unique_ptr<Task> task) {
    currentWorker->awaitChildTask(std::move(task));
-   //std::osyncstream(std::cout) <<"child task done"<< currentWorkerId() <<std::endl;
 }
 
 std::unique_ptr<SchedulerHandle> startScheduler(size_t numWorkers) {
