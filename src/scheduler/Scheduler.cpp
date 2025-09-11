@@ -11,6 +11,18 @@
 #include "lingodb/scheduler/Scheduler.h"
 #include "lingodb/scheduler/Task.h"
 
+#include <syncstream>
+
+namespace {
+void assertRelease(bool condition, std::string msg) {
+   if (!condition) {
+      std::cerr << "Assertion failed: " << msg << std::endl;
+      std::raise(SIGTRAP);
+      std::abort();
+   }
+}
+} // end namespace
+
 namespace lingodb::scheduler {
 class Worker;
 namespace {
@@ -186,7 +198,7 @@ class Fiber {
    Fiber() = default;
 
    ~Fiber() {
-      assert(done);
+      assertRelease(done, "Fiber destroyed while still running");
    }
 };
 #endif
@@ -242,6 +254,11 @@ void Fiber::setup() {
    assert(task && task->task);
    task->task->setup();
 }
+std::atomic<size_t> childTaskStarted = 0;
+std::atomic<size_t> childTaskFinalized = 0;
+std::atomic<size_t> childTaskWakeup = 0;
+std::atomic<size_t> childTaskFinished = 0;
+
 class Scheduler {
    size_t numWorkers;
 
@@ -337,32 +354,35 @@ class Scheduler {
       }
       return minYieldTask;
    }
-
    void returnTask(std::shared_ptr<TaskWrapper> task) {
       // Multiple worker may call here concurrently. Avoid one worker already called `delete task`
       // but another worker is still at `task->finalized`
-      {
-         std::lock_guard<std::mutex> lock(taskQueueMutex);
-         if (!task->coolingDown) {
-            task->coolingDown = true;
-            dequeueTaskLocked(task);
-         }
-      }
-      // Since the task is cooling down (protected with taskQueueMutex), deployedOnWorkers can not be changed anymore
-      auto taskDeployed = task->deployedOnWorkers.load();
       auto returnedNum = task->returnedFromWorkers.fetch_add(1) + 1;
-      if (taskDeployed == returnedNum) {
-         if (task->nonCompletedFibers) {
-            throw std::runtime_error("Task returned from workers, but still has non-completed fibers");
+      if (!task->task->hasWork()) {
+         {
+            std::lock_guard<std::mutex> lock(taskQueueMutex);
+            if (!task->coolingDown) {
+               task->coolingDown = true;
+               dequeueTaskLocked(task);
+            }
          }
-         auto finalizedCalled = task->finalizedCalled.fetch_add(1);
-         if (finalizedCalled > 0) {
-            //already finalized, no need to finalize again
-            throw std::runtime_error("onFinalize called more than once for the same task");
+         // Since the task is cooling down (protected with taskQueueMutex), deployedOnWorkers can not be changed anymore
+         auto taskDeployed = task->deployedOnWorkers.load();
+         if (taskDeployed == returnedNum) {
+            if (task->nonCompletedFibers) {
+               throw std::runtime_error("Task returned from workers, but still has non-completed fibers");
+            }
+            auto finalizedCalled = task->finalizedCalled.fetch_add(1);
+            if (finalizedCalled > 0) {
+               //already finalized, no need to finalize again
+               throw std::runtime_error("onFinalize called more than once for the same task");
+            }
+            assert(finalizedCalled == 0);
+            task->finalized = true;
+            task->onFinalize();
+         } else {
+            //std::osyncstream(std::cout)<<"Worker "<<currentWorkerId()<<" returns task"<< task.get()<<", but not all workers returned yet. Deployed: "<<taskDeployed<<", Returned: "<<returnedNum<<" for task" << task->task->name()<< " non completed fibers: " << std::boolalpha<< task->nonCompletedFibers<< std::endl;
          }
-         assert(finalizedCalled == 0);
-         task->finalized = true;
-         task->onFinalize();
       }
    }
 };
@@ -448,7 +468,9 @@ class Worker {
    }
 
    void awaitChildTask(std::unique_ptr<Task> task) {
+      childTaskStarted++;
       auto taskWrapper = std::make_shared<TaskWrapper>();
+      //std::osyncstream(std::cout)<<"starting child task"<<taskWrapper.get()<<std::endl;
       taskWrapper->task = std::move(task);
       Fiber* toYield;
       {
@@ -458,6 +480,7 @@ class Worker {
          toYield = waitingOnTasks[taskWrapper].get();
          taskWrapper->onFinalize = [&] {
             {
+               childTaskFinalized++;
                std::unique_lock<std::mutex> fiberLock2(fiberMutex);
                assert(waitingOnTasks.contains(taskWrapper));
                assert(waitingOnTasks[taskWrapper]);
@@ -467,12 +490,15 @@ class Worker {
                numWaitingFibers--;
                // taskWrapper will be automatically destroyed by shared_ptr
             }
+            //std::osyncstream(std::cout)<<"child task finalize: "<<workerId<<std::endl;
             wakeupWorker();
+            childTaskWakeup++;
          };
          scheduler.enqueueTask(taskWrapper);
       }
       toYield->yield();
       assert(taskWrapper->finalized);
+      childTaskFinished++;
    }
 
    void work() {
@@ -497,10 +523,11 @@ class Worker {
                   currentFiber->getTask()->unYieldFiber();
                }
                auto resumeTask = currentFiber->getTask();
-               handleFiberComplete(); //todo: is this correct?, or can we yield multiple times?
+               handleFiberComplete();
                scheduler.returnTask(resumeTask);
             }
-            assert(!currentFiber);
+            // we just finished a fiber, so see if we have more runnable fibers
+            continue;
          }
          if (fiberAllocator.canAllocate()) {
             std::shared_ptr<TaskWrapper> currTask = nullptr;
@@ -512,7 +539,7 @@ class Worker {
                }
             }
             if (currTask && !currTask->task->hasWork()) {
-               scheduler.returnTask(currTask);
+               scheduler.returnTask(currTask); //this usage is ok
                currTask = nullptr;
                continue;
             }
@@ -523,7 +550,7 @@ class Worker {
             if (currTask) {
                // Step 1. try startFiber, this will try to allocate work for the task
                if (!currTask->startFiber()) {
-                  scheduler.returnTask(currTask);
+                  scheduler.returnTask(currTask); // this usage is okay
                   continue;
                }
                //work on (part of) (new) task
@@ -545,7 +572,7 @@ class Worker {
                   std::lock_guard<std::mutex> lock(mutex);
                   this->currentTask = currTask;
                } else {
-                  scheduler.returnTask(currTask);
+                  scheduler.returnTask(currTask); //this usage is ok
                }
                //assert(!currentFiber);
 
@@ -658,7 +685,9 @@ void Scheduler::putWorkerToSleep(Worker* worker) {
       }
       lock.unlock();
       worker->shouldSleep = true;
+      //std::osyncstream(std::cout)<<"worker"<< worker->workerId<<" going to sleep"<<std::endl;
       worker->cv.wait(workerLock, [&]() { return !worker->shouldSleep; });
+      //std::osyncstream(std::cout)<<"worker"<< worker->workerId<<" woke up"<<std::endl;
    } else {
       worker->allowedToSleep = true;
    }
@@ -681,6 +710,7 @@ void awaitEntryTask(std::unique_ptr<Task> task) {
 }
 void awaitChildTask(std::unique_ptr<Task> task) {
    currentWorker->awaitChildTask(std::move(task));
+   //std::osyncstream(std::cout) <<"child task done"<< currentWorkerId() <<std::endl;
 }
 
 std::unique_ptr<SchedulerHandle> startScheduler(size_t numWorkers) {
