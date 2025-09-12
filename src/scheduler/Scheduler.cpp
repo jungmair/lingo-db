@@ -254,10 +254,6 @@ void Fiber::setup() {
    assert(task && task->task);
    task->task->setup();
 }
-std::atomic<size_t> childTaskStarted = 0;
-std::atomic<size_t> childTaskFinalized = 0;
-std::atomic<size_t> childTaskWakeup = 0;
-std::atomic<size_t> childTaskFinished = 0;
 
 class Scheduler {
    size_t numWorkers;
@@ -470,7 +466,6 @@ class Worker {
    }
 
    void awaitChildTask(std::unique_ptr<Task> task) {
-      childTaskStarted++;
       auto taskWrapper = std::make_shared<TaskWrapper>();
       //std::osyncstream(std::cout)<<"starting child task"<<taskWrapper.get()<<std::endl;
       taskWrapper->task = std::move(task);
@@ -482,7 +477,6 @@ class Worker {
          toYield = waitingOnTasks[taskWrapper].get();
          taskWrapper->onFinalize = [&] {
             {
-               childTaskFinalized++;
                std::unique_lock<std::mutex> fiberLock2(fiberMutex);
                assert(waitingOnTasks.contains(taskWrapper));
                assert(waitingOnTasks[taskWrapper]);
@@ -494,13 +488,11 @@ class Worker {
             }
             //std::osyncstream(std::cout)<<"child task finalize: "<<workerId<<std::endl;
             wakeupWorker();
-            childTaskWakeup++;
          };
          scheduler.enqueueTask(taskWrapper);
       }
       toYield->yield();
       assert(taskWrapper->finalized);
-      childTaskFinished++;
    }
 
    void work() {
