@@ -264,6 +264,7 @@ class Scheduler {
 
    std::atomic<bool> shutdown{false};
    std::vector<std::thread> workerThreads;
+   std::mutex shutdownMutex;
    Worker* idleWorkers = nullptr;
    std::mutex taskQueueMutex;
    std::mutex taskReturnMutex;
@@ -619,11 +620,13 @@ void Scheduler::start() {
          worker.work();
          stoppedWorkers++;
          currentWorker = nullptr;
+         std::unique_lock<std::mutex> lock(shutdownMutex);
       });
    }
 }
 
 void Scheduler::stop() {
+   std::unique_lock<std::mutex> lock(shutdownMutex);
    shutdown.store(true);
    size_t cntr = 0;
    size_t numTries = 0;
@@ -679,6 +682,7 @@ void Scheduler::putWorkerToSleep(Worker* worker) {
    std::unique_lock<std::mutex> lock(taskQueueMutex);
    std::unique_lock<std::mutex> workerLock(worker->mutex);
    if (worker->allowedToSleep) {
+      //assertRelease(!worker->isInIdleList, "Worker already in idle list");
       if (!worker->isInIdleList) {
          worker->nextIdleWorker = idleWorkers;
          idleWorkers = worker;
@@ -692,6 +696,7 @@ void Scheduler::putWorkerToSleep(Worker* worker) {
    } else {
       worker->allowedToSleep = true;
    }
+   //assertRelease(!worker->isInIdleList, "Worker still in idle list after wakeup");
 }
 
 void awaitEntryTask(std::unique_ptr<Task> task) {
