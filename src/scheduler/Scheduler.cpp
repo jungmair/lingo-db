@@ -378,6 +378,7 @@ class Scheduler {
                throw std::runtime_error("onFinalize called more than once for the same task");
             }
             assert(finalizedCalled == 0);
+            std::unique_lock<std::mutex> lk(task->finalizeMutex);
             task->finalized = true;
             task->onFinalize();
          } else {
