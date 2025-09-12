@@ -74,9 +74,11 @@ jobs:
         with:
           name: ${{ matrix.build_type }}-build-macos
           path: build/lingodb-${{ matrix.build_type }}
-      - name: Uninstall conflicting cmake brew package
+      - name: Resolve Homebrew tap conflict (uninstall cmake & untap local/pinned if present)
+        shell: bash
         run: |
-          brew uninstall cmake
+          brew uninstall cmake || true
+          brew untap local/pinned || true
       - name: Cache Homebrew packages
         id: cache-brew
         uses: actions/cache@v3
