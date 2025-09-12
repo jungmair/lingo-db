@@ -74,7 +74,9 @@ jobs:
         with:
           name: ${{ matrix.build_type }}-build-macos
           path: build/lingodb-${{ matrix.build_type }}
-
+      - name: Uninstall conflicting cmake brew package
+        run: |
+          brew uninstall cmake
       - name: Cache Homebrew packages
         id: cache-brew
         uses: actions/cache@v3
